@@ -1,0 +1,20 @@
+@inherits GameComponent
+
+@{
+    var s = Game.State!;
+    var found = Game.Content.Lore.Where(l => s.FoundLore.Contains(l.Id)).ToList();
+}
+<div class="panel journal-panel">
+    <h3>Infofragmente <span class="muted">@found.Count / @Game.Content.Lore.Count</span></h3>
+    @if (found.Count == 0)
+    {
+        <p class="muted">Noch nichts gefunden. Durchsuche Leichen, Terminals und Ruinen.</p>
+    }
+    @foreach (var l in found.AsEnumerable().Reverse())
+    {
+        <article class="lore">
+            <h4>@l.Title</h4>
+            <p>@l.Text</p>
+        </article>
+    }
+</div>

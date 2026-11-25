@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <title>Endless Survive</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Oswald:wght@400;600;700&display=swap" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23f2b43a'/><circle cx='16' cy='16' r='6' fill='%23222'/></svg>" />
+    <HeadOutlet @rendermode="RenderModeNoPrerender" />
+</head>
+
+<body>
+    <Routes @rendermode="RenderModeNoPrerender" />
+    <script src="game.js"></script>
+    <script src="_framework/blazor.web.js"></script>
+</body>
+
+</html>
+
+@code {
+    private static readonly IComponentRenderMode RenderModeNoPrerender = new InteractiveServerRenderMode(prerender: false);
+}

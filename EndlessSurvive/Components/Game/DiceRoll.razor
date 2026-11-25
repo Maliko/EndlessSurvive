@@ -1,0 +1,21 @@
+<div class="dice-roll @(Roll.Success ? "success" : "fail")">
+    <div class="dice">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M24 3l19 11v20L24 45 5 34V14z" fill="currentColor" opacity=".15" stroke="currentColor" stroke-width="2" />
+            <text x="24" y="25">@Roll.Roll</text>
+        </svg>
+    </div>
+    <div class="dice-info">
+        <span class="dice-skill">Probe: @Roll.SkillName</span>
+        <div class="dice-scale">
+            <div class="dice-zone" style="width:@(Roll.Chance)%"></div>
+            <div class="dice-mark" style="left:@(Roll.Roll)%"></div>
+        </div>
+        <span class="dice-verdict">W100 = @Roll.Roll gegen @Roll.Chance% →
+            <strong>@(Roll.Success ? (Roll.Critical ? "Kritischer Erfolg!" : "Erfolg") : "Fehlschlag")</strong></span>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RollResult Roll { get; set; } = default!;
+}

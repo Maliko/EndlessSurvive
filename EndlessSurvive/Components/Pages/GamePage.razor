@@ -1,0 +1,186 @@
+@page "/game"
+@inherits GameComponent
+@implements IAsyncDisposable
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Endless Survive</PageTitle>
+
+@if (Game.Loaded)
+{
+    var s = Game.State!;
+    var tile = Game.CurrentTile;
+    <div class="game-root">
+        <header class="hud">
+            <a class="hud-logo" href="/" title="Zum Titelbildschirm">ES</a>
+            <div class="hud-name">
+                <strong>@s.Char.Name</strong>
+                <span>Stufe @s.Char.Level</span>
+            </div>
+            <div class="hud-bars">
+                <Bar Label="LP" Value="s.Char.Hp" Max="Game.MaxHp" Kind="hp" />
+                <Bar Label="EP" Value="s.Char.Xp" Max="Game.XpForNext(s.Char.Level)" Kind="xp" />
+            </div>
+            <div class="hud-loc">
+                <span class="biome-chip" style="--chip:@tile.Biome.Color">@tile.Biome.Name</span>
+                <span class="danger d@(Math.Min(tile.Danger, 9))" title="Gefahrenstufe">⚠ @tile.Danger</span>
+                <span class="coords">@s.Char.X, @(-s.Char.Y)</span>
+            </div>
+        </header>
+
+        <main class="game-main">
+            <section class="map-col">
+                <MapView Cols="_cols" Rows="_rows" />
+                <div class="below-map">
+                    <div class="dpad">
+                        <button class="btn dpad-up" title="Norden (W / ↑)" @onclick="() => Game.Move(0, -1)">▲</button>
+                        <button class="btn dpad-left" title="Westen (A / ←)" @onclick="() => Game.Move(-1, 0)">◀</button>
+                        <button class="btn dpad-mid" title="Rasten (R)" @onclick="Game.Rest">☾</button>
+                        <button class="btn dpad-right" title="Osten (D / →)" @onclick="() => Game.Move(1, 0)">▶</button>
+                        <button class="btn dpad-down" title="Sueden (S / ↓)" @onclick="() => Game.Move(0, 1)">▼</button>
+                    </div>
+                    <div class="tile-info">
+                        <strong>@tile.Biome.Name</strong>
+                        <p>@tile.Biome.Description</p>
+                        <div class="tile-actions">
+                            <button class="btn" @onclick="Game.Rest" title="Rasten (R)">
+                                @(tile.X == 0 && tile.Y == 0 ? "In der Kapsel schlafen" : "Rasten")
+                            </button>
+                            @if (tile.Poi is not null && !s.TileState(tile.X, tile.Y).HasFlag(TileFlags.Resolved))
+                            {
+                                <button class="btn btn-primary" @onclick="() => Game.StepToward(tile.X, tile.Y)">@tile.Poi.Title <kbd>E</kbd></button>
+                            }
+                        </div>
+                        <small class="keys">WASD / Pfeile / Klick: Bewegen · R: Rasten · E: Ort untersuchen · 1–9: Optionen · Enter: Weiter · C/I/J: Reiter</small>
+                    </div>
+                    <LogPanel />
+                </div>
+            </section>
+
+            <aside class="side-col">
+                <nav class="tabs">
+                    <button class="tab @(_tab == 0 ? "active" : "")" @onclick="() => _tab = 0">
+                        Charakter @if (s.Char.AttributePoints + s.Char.SkillPoints > 0) { <span class="badge">@(s.Char.AttributePoints + s.Char.SkillPoints)</span> }
+                    </button>
+                    <button class="tab @(_tab == 1 ? "active" : "")" @onclick="() => _tab = 1">Inventar</button>
+                    <button class="tab @(_tab == 2 ? "active" : "")" @onclick="() => _tab = 2">Journal <span class="badge muted">@s.FoundLore.Count</span></button>
+                </nav>
+                <div class="tab-body">
+                    @switch (_tab)
+                    {
+                        case 0: <CharacterPanel />break;
+                        case 1: <InventoryPanel />break;
+                        default: <JournalPanel />break;
+                    }
+                </div>
+            </aside>
+        </main>
+
+        @if (Game.Combat is not null)
+        {
+            <CombatDialog />
+        }
+        else if (Game.Event is not null)
+        {
+            <EventDialog />
+        }
+        else if (Game.Notice is { } n)
+        {
+            <div class="overlay">
+                <div class="dialog notice notice-@n.Kind">
+                    <h2>@n.Title</h2>
+                    @foreach (var para in n.Text.Split("\n\n"))
+                    {
+                        <p>@para</p>
+                    }
+                    <div class="dialog-actions">
+                        <button class="btn btn-primary" @onclick="Game.DismissNotice">Weiter <kbd>Enter</kbd></button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private int _tab;
+    private DotNetObjectReference<GamePage>? _ref;
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (!Game.Load()) Nav.NavigateTo("/");
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && Game.Loaded)
+        {
+            _ref = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("esGame.register", _ref);
+            OnResize(await JS.InvokeAsync<int>("esGame.width"));
+        }
+    }
+
+    private int _cols = 19, _rows = 11;
+
+    /// <summary>Kartenausschnitt an die Fensterbreite anpassen (Handy: weniger Spalten).</summary>
+    [JSInvokable]
+    public void OnResize(int width)
+    {
+        var (c, r) = width < 520 ? (9, 11) : width < 1000 ? (13, 11) : (19, 11);
+        if (c == _cols && r == _rows) return;
+        _cols = c; _rows = r;
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnKey(string key)
+    {
+        if (!Game.Loaded) return;
+        var k = key.Length == 1 ? key.ToLowerInvariant() : key;
+        int digit = k.Length == 1 && char.IsDigit(k[0]) ? k[0] - '0' : -1;
+
+        if (Game.Combat is { } cb)
+        {
+            if (cb.Over) { if (k is "Enter" or " ") Game.EndCombat(); }
+            else if (digit == 1) Game.CombatAttack(false);
+            else if (digit == 2) Game.CombatAttack(true);
+            else if (digit == 3) Game.CombatFlee();
+        }
+        else if (Game.Event is { } ev)
+        {
+            if (ev.Finished) { if (k is "Enter" or " ") Game.CloseEvent(); }
+            else if (ev.ResultText is null && digit >= 1 && digit <= ev.Options.Count) Game.ChooseOption(ev.Options[digit - 1]);
+            else if (k == "Escape" && Game.CanLeaveEvent) Game.LeaveEvent();
+        }
+        else if (Game.Notice is not null)
+        {
+            if (k is "Enter" or " " or "Escape") Game.DismissNotice();
+        }
+        else
+        {
+            switch (k)
+            {
+                case "w" or "ArrowUp": Game.Move(0, -1); break;
+                case "s" or "ArrowDown": Game.Move(0, 1); break;
+                case "a" or "ArrowLeft": Game.Move(-1, 0); break;
+                case "d" or "ArrowRight": Game.Move(1, 0); break;
+                case "r": Game.Rest(); break;
+                case "c": _tab = 0; break;
+                case "i": _tab = 1; break;
+                case "j": _tab = 2; break;
+                case "e" or "Enter": var t = Game.CurrentTile; Game.StepToward(t.X, t.Y); break;
+                default: return;
+            }
+        }
+        InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+        try { await JS.InvokeVoidAsync("esGame.unregister"); } catch { /* Verbindung bereits weg */ }
+        _ref?.Dispose();
+    }
+}

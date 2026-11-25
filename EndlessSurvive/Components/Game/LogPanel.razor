@@ -1,0 +1,8 @@
+@inherits GameComponent
+
+<div class="log">
+    @foreach (var e in Game.State!.Log.AsEnumerable().Reverse().Take(40))
+    {
+        <div class="log-line log-@e.Kind"><span class="log-turn">@e.Turn</span>@e.Text</div>
+    }
+</div>

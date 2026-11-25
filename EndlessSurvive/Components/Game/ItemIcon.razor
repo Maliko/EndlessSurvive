@@ -1,0 +1,27 @@
+<svg class="item-icon" viewBox="0 0 24 24" style="color:@Def.Color" aria-hidden="true">
+    @switch (Def.Slot ?? Def.Category)
+    {
+        case "melee":
+            <path d="M5 19L17 7M15 5l4 4M4 20l2-2" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" />
+            break;
+        case "ranged":
+            <path d="M3 10h14l3-2v4h-4l-2 6h-4l1-6H3z" fill="currentColor" />
+            break;
+        case "body":
+            <path d="M8 4l4 2 4-2 4 4-3 3v9H7v-9L4 8z" fill="currentColor" />
+            break;
+        case "head":
+            <path d="M4 15a8 8 0 0116 0v2H4z" fill="currentColor" /><path d="M2 17h20" stroke="currentColor" stroke-width="2" />
+            break;
+        case "ammo":
+            <path d="M7 20V9l2-4 2 4v11zM13 20V9l2-4 2 4v11z" fill="currentColor" />
+            break;
+        default:
+            <rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor" /><path d="M12 8v8M8 12h8" stroke="#111" stroke-width="2.5" />
+            break;
+    }
+</svg>
+
+@code {
+    [Parameter, EditorRequired] public ItemDef Def { get; set; } = default!;
+}

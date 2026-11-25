@@ -1,0 +1,66 @@
+@inherits GameComponent
+
+@{
+    var s = Game.State!;
+    var c = Game.Content;
+}
+<div class="panel char-panel">
+    <section>
+        <h3>Attribute
+            @if (s.Char.AttributePoints > 0) { <span class="points has">@s.Char.AttributePoints frei</span> }
+        </h3>
+        <div class="attr-grid">
+            @foreach (var a in c.Attributes)
+            {
+                <div class="attr" title="@a.Description">
+                    <span class="attr-abbrev">@a.Abbrev</span>
+                    <span class="attr-value">@Game.Attr(a.Key)</span>
+                    <span class="attr-name">@a.Name</span>
+                    @if (s.Char.AttributePoints > 0)
+                    {
+                        <button class="btn btn-small plus" @onclick="() => Game.SpendAttribute(a.Key)">+</button>
+                    }
+                </div>
+            }
+        </div>
+        <div class="derived">
+            <span title="Lebenspunkte">LP <strong>@s.Char.Hp/@Game.MaxHp</strong></span>
+            <span title="Gegner-Trefferchance sinkt um diesen Wert">Ausweichen <strong>@Game.Dodge%</strong></span>
+            <span title="Reduziert erlittenen Schaden">Ruestung <strong>@Game.ArmorTotal</strong></span>
+        </div>
+    </section>
+
+    <section>
+        <h3>Fertigkeiten
+            @if (s.Char.SkillPoints > 0) { <span class="points has">@s.Char.SkillPoints frei</span> }
+        </h3>
+        <ul class="skill-list">
+            @foreach (var sk in c.Skills)
+            {
+                var val = Game.SkillValue(sk.Key);
+                <li title="@sk.Description">
+                    <span class="skill-name">@sk.Name <em>@c.Attribute(sk.AttributeKey)?.Abbrev</em></span>
+                    <span class="skill-ranks">@(Game.Ranks(sk.Key) > 0 ? $"Rang {Game.Ranks(sk.Key)}" : "")</span>
+                    <span class="skill-bar"><span style="width:@(Math.Min(100, val))%"></span></span>
+                    <span class="skill-val">@val%</span>
+                    @if (s.Char.SkillPoints > 0)
+                    {
+                        <button class="btn btn-small plus" @onclick="() => Game.SpendSkill(sk.Key)">+</button>
+                    }
+                </li>
+            }
+        </ul>
+    </section>
+
+    <section class="stats">
+        <h3>Statistik</h3>
+        <dl>
+            <dt>Zuege</dt><dd>@s.Char.Turn</dd>
+            <dt>Besiegte Gegner</dt><dd>@s.Char.Kills</dd>
+            <dt>Tode</dt><dd>@s.Char.Deaths</dd>
+            <dt>Hoechste Gefahrenstufe</dt><dd>@s.Char.MaxDanger</dd>
+            <dt>Erkundete Felder</dt><dd>@s.Tiles.Count</dd>
+            <dt>Naechste Stufe</dt><dd>@(Game.XpForNext(s.Char.Level) - s.Char.Xp) EP</dd>
+        </dl>
+    </section>
+</div>

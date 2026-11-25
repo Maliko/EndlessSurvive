@@ -1,0 +1,86 @@
+@inherits GameComponent
+
+@{
+    var cb = Game.Combat!;
+    var e = cb.Enemy;
+    var s = Game.State!;
+    var melee = Game.Equipped("melee");
+    var ranged = Game.Equipped("ranged");
+    var rangedProblem = Game.RangedProblem();
+}
+<div class="overlay combat-overlay">
+    <div class="dialog combat-dialog">
+        <div class="combatants">
+            <div class="fighter player-side">
+                <svg viewBox="0 0 64 64" class="fighter-icon" style="color:#f2b43a">
+                    <circle cx="32" cy="15" r="8" fill="currentColor" />
+                    <path d="M20 58V32q0-6 12-6t12 6v26h-6V42h-12v16z" fill="currentColor" />
+                </svg>
+                <strong>@s.Char.Name</strong>
+                <Bar Label="LP" Value="s.Char.Hp" Max="Game.MaxHp" Kind="hp" />
+                <small>Ausweichen @Game.Dodge% · Ruestung @Game.ArmorTotal</small>
+            </div>
+            <div class="versus">VS</div>
+            <div class="fighter enemy-side @(e.Hp <= 0 ? "dead" : "")">
+                <svg viewBox="0 0 64 64" class="fighter-icon" style="color:@e.Def.Color">
+                    @((MarkupString)(e.Def.Icon ?? "<circle cx='32' cy='32' r='20' fill='currentColor'/>"))
+                </svg>
+                <strong>@e.Def.Name <span class="muted">Stufe @e.Level</span></strong>
+                <Bar Label="LP" Value="e.Hp" Max="e.MaxHp" Kind="enemy" />
+                <small>Trifft dich zu @Game.EnemyHitChance% · Schaden @e.DamageMin–@e.DamageMax · Ruestung @e.Armor</small>
+            </div>
+        </div>
+        <p class="enemy-desc">@e.Def.Description</p>
+
+        <div class="combat-log">
+            @foreach (var l in cb.Lines.AsEnumerable().Reverse().Take(8))
+            {
+                <div class="cl cl-@l.Kind">@l.Text</div>
+            }
+        </div>
+
+        @if (!cb.Over)
+        {
+            <div class="combat-actions">
+                <button class="btn btn-action" @onclick="() => Game.CombatAttack(false)">
+                    <kbd>1</kbd> Nahkampf
+                    <small>@(melee is null ? "Faeuste" : Game.ItemName(melee)) · @Game.AttackChance(false)%</small>
+                </button>
+                <button class="btn btn-action" disabled="@(rangedProblem is not null)" title="@rangedProblem" @onclick="() => Game.CombatAttack(true)">
+                    <kbd>2</kbd> Fernkampf
+                    <small>@(rangedProblem ?? $"{Game.ItemName(ranged!)} · {Game.AttackChance(true)}%")</small>
+                </button>
+                <button class="btn btn-action" @onclick="Game.CombatFlee">
+                    <kbd>3</kbd> Fliehen
+                    <small>@Game.FleeChance%</small>
+                </button>
+            </div>
+            var heals = s.Inventory.Where(i => Game.Def(i).IsConsumable).ToList();
+            @if (heals.Count > 0)
+            {
+                <div class="combat-items">
+                    <span class="muted">Heilen (kostet einen Zug):</span>
+                    @foreach (var it in heals)
+                    {
+                        <button class="btn btn-small" @onclick="() => Game.CombatUseItem(it)">
+                            @Game.ItemName(it) ×@it.Quantity
+                        </button>
+                    }
+                </div>
+            }
+        }
+        else
+        {
+            <div class="combat-result @(cb.Won ? "won" : cb.Fled ? "fled" : "lost")">
+                <h3>@(cb.Won ? "Sieg!" : cb.Fled ? "Entkommen" : "Niederlage")</h3>
+                @foreach (var r in cb.RewardLines)
+                {
+                    <div>@r</div>
+                }
+            </div>
+            <div class="dialog-actions">
+                <button class="btn btn-primary" @onclick="Game.EndCombat">Weiter <kbd>Enter</kbd></button>
+            </div>
+        }
+    </div>
+</div>

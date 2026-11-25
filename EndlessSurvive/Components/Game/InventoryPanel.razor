@@ -1,0 +1,106 @@
+@inherits GameComponent
+
+@{
+    var s = Game.State!;
+    var slots = new (string Key, string Name)[] { ("melee", "Nahkampf"), ("ranged", "Fernkampf"), ("body", "Koerper"), ("head", "Kopf") };
+}
+<div class="panel inv-panel">
+    <section>
+        <h3>Ausruestung</h3>
+        <div class="slots">
+            @foreach (var (key, name) in slots)
+            {
+                var it = Game.Equipped(key);
+                <div class="slot @(it is null ? "empty" : "")">
+                    <span class="slot-name">@name</span>
+                    @if (it is not null)
+                    {
+                        var d = Game.Def(it);
+                        <div class="slot-item">
+                            <ItemIcon Def="d" />
+                            <span>@Game.ItemName(it)</span>
+                        </div>
+                        <span class="item-stats">@Stats(it)</span>
+                    }
+                    else
+                    {
+                        <span class="slot-item muted">@(key == "melee" ? "Faeuste (1–3)" : "—")</span>
+                    }
+                </div>
+            }
+        </div>
+    </section>
+
+    <section>
+        <h3>Rucksack <span class="muted">@s.Inventory.Count(i => !i.Equipped) Gegenstaende</span>
+            @if (Game.ObsoleteCount > 0)
+            {
+                <button class="btn btn-small btn-ghost push-right" title="Wirft alle Ausruestung weg, die nicht besser als die angelegte ist" @onclick="Game.DropObsolete">Schwaechere aussortieren (@Game.ObsoleteCount)</button>
+            }
+        </h3>
+        @if (!s.Inventory.Any(i => !i.Equipped))
+        {
+            <p class="muted">Leer.</p>
+        }
+        <ul class="inv-list">
+            @foreach (var it in s.Inventory.Where(i => !i.Equipped).OrderBy(i => Order(Game.Def(i).Category)).ThenBy(i => Game.Def(i).Name).ThenByDescending(i => i.Level))
+            {
+                var d = Game.Def(it);
+                var cmp = Compare(it);
+                <li>
+                    <ItemIcon Def="d" />
+                    <div class="inv-main" title="@d.Description">
+                        <span class="inv-name">@Game.ItemName(it) @if (it.Quantity > 1) { <em>×@it.Quantity</em> }</span>
+                        <span class="item-stats">@Stats(it) @if (cmp is not null) { <b class="@(cmp > 0 ? "better" : cmp < 0 ? "worse" : "")">@(cmp > 0 ? "▲" : cmp < 0 ? "▼" : "=")</b> }</span>
+                    </div>
+                    <div class="inv-actions">
+                        @if (d.IsEquippable)
+                        {
+                            <button class="btn btn-small" @onclick="() => Game.Equip(it)">Anlegen</button>
+                        }
+                        @if (d.IsConsumable)
+                        {
+                            <button class="btn btn-small" @onclick="() => Game.UseItem(it)">Benutzen</button>
+                        }
+                        <button class="btn btn-small btn-ghost" title="Wegwerfen" @onclick="() => Game.Drop(it)">✕</button>
+                    </div>
+                </li>
+            }
+        </ul>
+    </section>
+</div>
+
+@code {
+    private static int Order(string cat) => cat switch { "weapon" => 0, "armor" => 1, "consumable" => 2, "ammo" => 3, _ => 4 };
+
+    private string Stats(InventoryItem it)
+    {
+        var d = Game.Def(it);
+        if (d.IsWeapon)
+        {
+            var (mn, mx) = Game.ItemDamage(it);
+            var ammo = d.AmmoKey is not null && Game.Content.Items.TryGetValue(d.AmmoKey, out var a) ? $" · {a.Name}: {Game.Count(a.Key)}" : "";
+            return $"Schaden {mn}–{mx}{ammo}";
+        }
+        if (d.IsArmor) return $"Ruestung {Game.ItemArmor(it)}";
+        if (d.IsConsumable) return $"Heilt {d.HealMin}–{d.HealMax} LP";
+        if (d.Category == "ammo") return "Munition";
+        return "";
+    }
+
+    /// <summary>Vergleich mit der angelegten Ausruestung: &gt;0 besser, &lt;0 schlechter.</summary>
+    private int? Compare(InventoryItem it)
+    {
+        var d = Game.Def(it);
+        if (!d.IsEquippable) return null;
+        var eq = Game.Equipped(d.Slot!);
+        if (eq is null) return 1;
+        if (d.IsWeapon)
+        {
+            var (a1, b1) = Game.ItemDamage(it);
+            var (a2, b2) = Game.ItemDamage(eq);
+            return (a1 + b1).CompareTo(a2 + b2);
+        }
+        return Game.ItemArmor(it).CompareTo(Game.ItemArmor(eq));
+    }
+}

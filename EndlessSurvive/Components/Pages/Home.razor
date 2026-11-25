@@ -1,0 +1,99 @@
+@page "/"
+@inject GameService Game
+@inject NavigationManager Nav
+
+<PageTitle>Endless Survive</PageTitle>
+
+<div class="title-screen">
+    <svg class="title-scene" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+        <defs>
+            <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#0d0c10" />
+                <stop offset=".55" stop-color="#2a1d1a" />
+                <stop offset="1" stop-color="#5a3622" />
+            </linearGradient>
+            <radialGradient id="sun" cx=".5" cy=".5" r=".5">
+                <stop offset="0" stop-color="#ffcf6a" stop-opacity=".95" />
+                <stop offset=".35" stop-color="#f2873a" stop-opacity=".55" />
+                <stop offset="1" stop-color="#f2873a" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#1a1513" />
+                <stop offset="1" stop-color="#0a0909" />
+            </linearGradient>
+        </defs>
+        <rect width="1600" height="900" fill="url(#sky)" />
+        <circle class="sun" cx="1080" cy="560" r="330" fill="url(#sun)" />
+        <circle cx="1080" cy="560" r="78" fill="#ffd98a" opacity=".55" />
+        <!-- ferne Skyline -->
+        <path fill="#3a2621" opacity=".85" d="M0 640 L0 560 h60 v-40 h30 v60 h50 v-120 h40 v120 h30 v-70 h60 v90 h40 v-160 l20 -30 l20 30 v160 h50 v-60 h70 v-40 h30 v100 h40 v-180 h60 v180 h30 v-90 h50 v60 h40 v-130 h20 l15 -40 l15 40 h20 v130 h60 v-50 h40 v70 h70 v-110 h50 v110 h40 v-60 h40 v-30 h30 v90 h60 v-140 h50 v140 h40 v-70 h60 v90 h50 v-120 h30 v120 h70 v-50 h60 v80 L1600 640 Z" />
+        <!-- nahe Ruinen -->
+        <path fill="#1d1614" d="M0 700 L0 600 h80 v-90 l30 -20 v110 h40 v-180 h70 l-10 40 l20 20 v120 h60 v-60 h50 v120 h40 v-240 h90 v60 l-20 30 l20 10 v140 h50 v-90 h40 v120 h70 L800 640 v-60 h50 v-130 h60 l20 50 v140 h40 v-70 h60 v100 h40 v-200 h30 l40 60 v140 h50 v-50 h60 v80 h50 v-160 h80 v120 h40 v-60 h60 v110 L1600 700 Z" />
+        <!-- Fenster -->
+        <g fill="#f2b43a" opacity=".5">
+            <rect x="378" y="470" width="6" height="8" /><rect x="400" y="520" width="6" height="8" /><rect x="1180" y="520" width="6" height="8" />
+            <rect x="900" y="480" width="6" height="8" opacity=".5" />
+        </g>
+        <!-- Boden und Bunkereingang -->
+        <path fill="url(#ground)" d="M0 690 Q400 650 800 680 T1600 670 V900 H0 Z" />
+        <g transform="translate(250 700)">
+            <path d="M0 60 Q0 0 70 0 Q140 0 140 60 Z" fill="#15110f" stroke="#3b302a" stroke-width="3" />
+            <circle cx="70" cy="45" r="34" fill="#0d0b0a" stroke="#f2b43a" stroke-width="3" class="bunker-door" />
+            <circle cx="70" cy="45" r="10" fill="none" stroke="#f2b43a" stroke-width="2" />
+            <path d="M70 15 v60 M40 45 h60" stroke="#f2b43a" stroke-width="2" opacity=".6" />
+        </g>
+        <!-- Person -->
+        <g transform="translate(470 712)" fill="#0b0908">
+            <circle cx="0" cy="-58" r="9" />
+            <path d="M-10 -48 h20 l4 34 h-6 l-2 30 h-6 l-1 -26 h-2 l-1 26 h-6 l-2 -30 h-6 z" />
+            <path d="M10 -44 l10 22" stroke="#0b0908" stroke-width="5" />
+        </g>
+    </svg>
+
+    <div class="ash-layer" aria-hidden="true">
+        @for (int i = 0; i < 40; i++)
+        {
+            var left = (i * 37) % 100;
+            var delay = (i * 1.7) % 12;
+            var dur = 9 + (i * 3) % 9;
+            var size = 2 + i % 3;
+            <span style="left:@(left)%;animation-delay:-@(delay.ToString(System.Globalization.CultureInfo.InvariantCulture))s;animation-duration:@(dur)s;width:@(size)px;height:@(size)px"></span>
+        }
+    </div>
+
+    <div class="title-content">
+        <div class="title-kicker">Kryostase beendet · Systemzeit unbekannt</div>
+        <h1 class="game-title" data-text="@Game.Content.Text("title")">@Game.Content.Text("title")</h1>
+        <p class="game-subtitle">@Game.Content.Text("subtitle")</p>
+
+        <div class="title-buttons">
+            @if (_save is not null)
+            {
+                <button class="btn btn-primary btn-big" @onclick="Continue">
+                    Fortsetzen
+                    <small>@_save.Name · Stufe @_save.Level</small>
+                </button>
+                <button class="btn btn-big" @onclick='() => Nav.NavigateTo("/new")'>Neues Spiel</button>
+            }
+            else
+            {
+                <button class="btn btn-primary btn-big" @onclick='() => Nav.NavigateTo("/new")'>Spiel starten</button>
+            }
+        </div>
+
+        <div class="title-features">
+            <span>W100-Proben</span><span>Endlose Welt</span><span>Endlose Stufen</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    private CharacterState? _save;
+
+    protected override void OnInitialized() => _save = Game.PeekSave();
+
+    private void Continue()
+    {
+        if (Game.Load()) Nav.NavigateTo("/game");
+    }
+}

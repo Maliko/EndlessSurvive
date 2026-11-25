@@ -1,0 +1,100 @@
+@page "/new"
+@inject GameService Game
+@inject NavigationManager Nav
+
+<PageTitle>Neuer Charakter – Endless Survive</PageTitle>
+
+<div class="create-screen">
+    <div class="create-card">
+        <header class="create-header">
+            <div class="title-kicker">Kapsel 23 · Identitaet wiederherstellen</div>
+            <h1>Wer bist du?</h1>
+        </header>
+
+        <label class="field">
+            <span>Name</span>
+            <input @bind="_name" @bind:event="oninput" maxlength="24" placeholder="Namenlos" />
+        </label>
+
+        <section>
+            <h2>Attribute <span class="points @(AttrLeft > 0 ? "has" : "")">@AttrLeft Punkte frei</span></h2>
+            <div class="create-grid">
+                @foreach (var a in C.Attributes)
+                {
+                    <div class="create-row">
+                        <div class="create-label">
+                            <strong>@a.Name</strong>
+                            <small>@a.Description</small>
+                        </div>
+                        <div class="stepper">
+                            <button class="btn btn-small" disabled="@(_attrs[a.Key] <= AttrStart)" @onclick="() => _attrs[a.Key]--">−</button>
+                            <span class="stepper-value">@_attrs[a.Key]</span>
+                            <button class="btn btn-small" disabled="@(AttrLeft <= 0 || _attrs[a.Key] >= AttrMax)" @onclick="() => _attrs[a.Key]++">+</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <section>
+            <h2>Fertigkeiten <span class="points @(SkillLeft > 0 ? "has" : "")">@SkillLeft Punkte frei</span></h2>
+            <p class="hint">Probenwert = @C.Int("SkillBase") % + Attribut × @C.Int("SkillPerAttribute") + Rang × @C.Int("SkillPerRank"). Eine Probe gelingt, wenn der W100 kleiner oder gleich dem Wert ist.</p>
+            <div class="create-grid skills">
+                @foreach (var s in C.Skills)
+                {
+                    var attr = C.Attribute(s.AttributeKey);
+                    <div class="create-row">
+                        <div class="create-label">
+                            <strong>@s.Name <em>@attr?.Abbrev</em></strong>
+                            <small>@s.Description</small>
+                        </div>
+                        <div class="stepper">
+                            <span class="skill-pct">@SkillValue(s)%</span>
+                            <button class="btn btn-small" disabled="@(_skills[s.Key] <= 0)" @onclick="() => _skills[s.Key]--">−</button>
+                            <span class="stepper-value">@_skills[s.Key]</span>
+                            <button class="btn btn-small" disabled="@(SkillLeft <= 0 || _skills[s.Key] >= 3)" @onclick="() => _skills[s.Key]++">+</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <footer class="create-footer">
+            <a class="btn" href="/">Zurueck</a>
+            @if (_hasSave)
+            {
+                <span class="warn-text">Achtung: Der bestehende Spielstand wird ueberschrieben.</span>
+            }
+            <button class="btn btn-primary" @onclick="Start">Kapsel oeffnen</button>
+        </footer>
+    </div>
+</div>
+
+@code {
+    private ContentStore C => Game.Content;
+    private string _name = "";
+    private bool _hasSave;
+    private readonly Dictionary<string, int> _attrs = new();
+    private readonly Dictionary<string, int> _skills = new();
+
+    private int AttrStart => C.Int("AttributeStart", 5);
+    private int AttrMax => C.Int("AttributeCreationMax", 10);
+    private int AttrLeft => C.Int("AttributeCreationPoints", 8) - _attrs.Values.Sum(v => v - AttrStart);
+    private int SkillLeft => C.Int("SkillCreationPoints", 6) - _skills.Values.Sum();
+
+    protected override void OnInitialized()
+    {
+        foreach (var a in C.Attributes) _attrs[a.Key] = AttrStart;
+        foreach (var s in C.Skills) _skills[s.Key] = 0;
+        _hasSave = Game.HasSave();
+    }
+
+    private int SkillValue(SkillDef s) =>
+        Math.Min(C.Int("ChanceMax", 95), C.Int("SkillBase") + _attrs.GetValueOrDefault(s.AttributeKey) * C.Int("SkillPerAttribute") + _skills[s.Key] * C.Int("SkillPerRank"));
+
+    private void Start()
+    {
+        Game.NewGame(_name, new(_attrs), new(_skills));
+        Nav.NavigateTo("/game");
+    }
+}

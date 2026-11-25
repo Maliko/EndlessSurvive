@@ -1,0 +1,7 @@
+bin/
+obj/
+.vs/
+*.user
+EndlessSurvive/Data/save.db
+EndlessSurvive/Data/save.db-*
+EndlessSurvive/Data/content.db-*
