@@ -1,0 +1,210 @@
+@page "/admin/t/{TableName}/{Id}"
+@layout AdminLayout
+@inject ContentAdmin Admin
+@inject ContentValidator Validator
+@inject NavigationManager Nav
+
+<PageTitle>@(_t?.Label ?? TableName) bearbeiten – Verwaltung</PageTitle>
+
+@if (_t is null || (!_isNew && _row is null))
+{
+    <p>Eintrag nicht gefunden. <a href="/admin/t/@TableName">Zur Liste</a></p>
+    return;
+}
+
+<header class="admin-head">
+    <div class="admin-crumbs"><a href="/admin/t/@_t.Name">@_t.Label</a> /</div>
+    <div class="admin-head-row">
+        <h1>@(_isNew ? "Neuer Eintrag" : Title)</h1>
+        <div class="admin-actions">
+            @if (!_isNew)
+            {
+                <button class="btn" @onclick="Duplicate">Duplizieren</button>
+                <button class="btn btn-danger" @onclick="() => _confirmDelete = true">Löschen</button>
+            }
+            <button class="btn btn-primary" @onclick="Save">Speichern</button>
+        </div>
+    </div>
+</header>
+
+@if (_msg is not null) { <div class="admin-flash @(_msgBad ? "bad" : "")">@_msg</div> }
+
+@if (_confirmDelete)
+{
+    var del = _children.Where(c => c.Column.NotNull).Sum(c => c.Rows.Count);
+    var clear = _children.Where(c => !c.Column.NotNull).Sum(c => c.Rows.Count);
+    <div class="admin-box danger">
+        <p><strong>Diesen Eintrag wirklich löschen?</strong> Vorher wird eine Sicherung angelegt.</p>
+        @if (del > 0) { <p>@del abhängige Einträge (siehe unten) werden mitgelöscht.</p> }
+        @if (clear > 0) { <p>Bei @clear Einträgen wird der Verweis geleert.</p> }
+        <p class="muted">Verweise in Textfeldern (z. B. in Effekten oder Biom-Listen) werden nicht angepasst. Die Inhaltsprüfung zeigt sie danach an.</p>
+        <div class="admin-actions">
+            <button class="btn btn-danger" @onclick="Delete">Ja, löschen</button>
+            <button class="btn" @onclick="() => _confirmDelete = false">Abbrechen</button>
+        </div>
+    </div>
+}
+
+@if (_issues.Count > 0)
+{
+    <ul class="admin-issues">
+        @foreach (var i in _issues) { <li class="@(i.Severity == Severity.Error ? "bad" : "warn")">@i.Message</li> }
+    </ul>
+}
+
+<div class="admin-form">
+    @foreach (var c in _t.Columns)
+    {
+        if (c.IsPk && _t.AutoId && _isNew) continue;
+        <AdminField Column="c" Value="@_form.GetValueOrDefault(c.Name)" ValueChanged="v => _form[c.Name] = v"
+                    ReadOnly="@(c.IsPk && !_isNew)" Error="@_errors.GetValueOrDefault(c.Name)"
+                    PreviewBackground="@(_t.Name == "Biomes" ? _form.GetValueOrDefault("Color") : null)"
+                    PreviewColor="@_form.GetValueOrDefault("Color")" />
+    }
+</div>
+@if (!_isNew && _t.Pk is { } pk && !_t.AutoId)
+{
+    <p class="muted small">Der Schlüssel (@pk.Name) lässt sich nicht ändern, weil andere Einträge darauf verweisen können. Zum Umbenennen: duplizieren und das Original löschen.</p>
+}
+
+@foreach (var ch in _children)
+{
+    <section class="admin-box">
+        <div class="admin-head-row">
+            <h2>@ch.Table.Label <span class="muted">über @ch.Column.Name</span></h2>
+            <a class="btn btn-small" href="/admin/t/@ch.Table.Name/new?@ch.Column.Name=@Uri.EscapeDataString(_row![_t.Pk!.Name]?.ToString() ?? "")">+ Neu</a>
+        </div>
+        @if (ch.Rows.Count == 0) { <p class="muted">Keine.</p> }
+        <table class="admin-table">
+            <tbody>
+                @foreach (var r in ch.Rows)
+                {
+                    <tr @onclick='() => Nav.NavigateTo($"/admin/t/{ch.Table.Name}/{r.RowId}")'>
+                        @foreach (var c in ch.Table.DisplayColumns.Where(n => !n.Equals(ch.Column.Name, StringComparison.OrdinalIgnoreCase)).Select(n => ch.Table.Column(n)!))
+                        {
+                            <td><CellView Column="c" Row="r" /></td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+}
+
+@code {
+    [Parameter] public string TableName { get; set; } = "";
+    [Parameter] public string Id { get; set; } = "";
+
+    private TableInfo? _t;
+    private ContentRow? _row;
+    private bool _isNew, _confirmDelete, _msgBad;
+    private string? _msg;
+    private Dictionary<string, string?> _form = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _errors = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<ChildRows> _children = [];
+    private List<Issue> _issues = [];
+
+    private string Title => _t?.TitleColumn is { } tc ? $"{_form.GetValueOrDefault(tc)}" : _form.GetValueOrDefault(_t?.Pk?.Name ?? "") ?? "";
+
+    protected override void OnParametersSet()
+    {
+        _t = Admin.Table(TableName);
+        _msg = null; _confirmDelete = false; _errors.Clear(); _form.Clear();
+        if (_t is null) return;
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        _isNew = Id == "new";
+
+        if (Id == "find" && query.TryGetValue("key", out var key))
+        {
+            var found = Admin.RowByKey(_t, key.ToString());
+            if (found is not null) { Nav.NavigateTo($"/admin/t/{_t.Name}/{found.RowId}", replace: true); return; }
+        }
+
+        if (_isNew)
+        {
+            _row = null;
+            foreach (var c in _t.Columns) _form[c.Name] = c.Default?.Trim('\'');
+            // Vorbelegung aus der Adresse (?Spalte=Wert), z. B. beim Duplizieren oder fuer Unterzeilen
+            foreach (var (k, v) in query) if (_t.Column(k) is not null) _form[k] = v.ToString();
+            _children = [];
+            _issues = [];
+        }
+        else
+        {
+            _row = long.TryParse(Id, out var rid) ? Admin.Row(_t, rid) : null;
+            if (_row is null) return;
+            foreach (var c in _t.Columns) _form[c.Name] = _row.Text(c.Name);
+            _children = Admin.Children(_t, _row);
+            var keyText = _t.Pk is null ? null : _row.Text(_t.Pk.Name);
+            _issues = Validator.Run().Where(i => i.Table == _t.Name && i.Key == keyText).ToList();
+        }
+    }
+
+    private Dictionary<string, object?>? Collect()
+    {
+        _errors.Clear();
+        var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in _t!.Columns)
+        {
+            if (c.IsPk && _t.AutoId) continue;
+            if (c.IsPk && !_isNew) continue;
+            var v = ContentAdmin.Convert(c, _form.GetValueOrDefault(c.Name), out var err);
+            if (c.IsPk && v is null) err = "Schlüssel fehlt";
+            if (err is not null) _errors[c.Name] = err;
+            values[c.Name] = v;
+        }
+        if (_errors.Count > 0) { Flash("Bitte die markierten Felder prüfen.", bad: true); return null; }
+        return values;
+    }
+
+    private void Save()
+    {
+        var values = Collect();
+        if (values is null) return;
+        try
+        {
+            if (_isNew)
+            {
+                var id = Admin.Insert(_t!, values);
+                Nav.NavigateTo($"/admin/t/{_t!.Name}/{id}");
+            }
+            else
+            {
+                Admin.Update(_t!, _row!.RowId, values);
+                OnParametersSet();
+                Flash("Gespeichert.");
+            }
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
+        {
+            Flash(ex.SqliteErrorCode switch
+            {
+                19 when ex.Message.Contains("UNIQUE") => "Dieser Schlüssel ist schon vergeben.",
+                19 when ex.Message.Contains("FOREIGN KEY") => "Ein Verweis zeigt auf einen Eintrag, den es nicht gibt.",
+                _ => "Datenbankfehler: " + ex.Message,
+            }, bad: true);
+        }
+    }
+
+    private void Duplicate()
+    {
+        var parts = _t!.Columns.Where(c => !(c.IsPk && _t.AutoId))
+            .Select(c => $"{c.Name}={Uri.EscapeDataString((c.IsPk ? _form.GetValueOrDefault(c.Name) + "_kopie" : _form.GetValueOrDefault(c.Name)) ?? "")}");
+        Nav.NavigateTo($"/admin/t/{_t.Name}/new?{string.Join("&", parts)}");
+    }
+
+    private void Delete()
+    {
+        try
+        {
+            Admin.Delete(_t!, _row!.RowId, cascade: true);
+            Nav.NavigateTo($"/admin/t/{_t!.Name}");
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
+        {
+            Flash("Löschen fehlgeschlagen: " + ex.Message, bad: true);
+        }
+    }
+
+    private void Flash(string m, bool bad = false) { _msg = m; _msgBad = bad; }
+}

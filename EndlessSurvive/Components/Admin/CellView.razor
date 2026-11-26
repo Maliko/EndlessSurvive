@@ -1,0 +1,30 @@
+@{
+    var ed = Column.Editor;
+    var text = Row.Text(Column.Name);
+}
+@if (ed == "color" && text != "")
+{
+    <span class="swatch" style="background:@text"></span><span class="mono">@text</span>
+}
+else if (ed.StartsWith("svg:"))
+{
+    var size = ed == "svg:64" ? 64 : 48;
+    <svg class="cell-svg" viewBox="0 0 @size @size" style="background:@(Row.Text("Color") is { Length: > 0 } c && ed == "svg:48" ? c : "#1a181c");color:@(Row.Text("Color") is { Length: > 0 } c2 ? c2 : "#ccc")">@((MarkupString)text)</svg>
+}
+else if (ed == "bool")
+{
+    <span>@(text == "1" ? "✓" : "–")</span>
+}
+else if (Row[Column.Name] is null)
+{
+    <span class="muted">–</span>
+}
+else
+{
+    <span title="@(text.Length > 70 ? text : null)">@(text.Length > 70 ? text[..70] + "…" : text)</span>
+}
+
+@code {
+    [Parameter, EditorRequired] public ColumnInfo Column { get; set; } = default!;
+    [Parameter, EditorRequired] public ContentRow Row { get; set; } = default!;
+}

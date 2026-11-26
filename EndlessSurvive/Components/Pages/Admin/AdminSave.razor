@@ -1,0 +1,179 @@
+@page "/admin/save"
+@layout AdminLayout
+@inject SaveStore Saves
+@inject ContentStore Content
+
+<PageTitle>Spielstand – Verwaltung</PageTitle>
+
+<header class="admin-head">
+    <div class="admin-head-row">
+        <h1>Spielstand</h1>
+        @if (_s is not null) { <button class="btn btn-primary" @onclick="Save">Speichern</button> }
+    </div>
+    <p class="muted">Ein geöffnetes Spiel lädt den Spielstand nach dem Speichern automatisch neu. Offene Ereignisse und Kämpfe werden dabei verworfen.</p>
+</header>
+
+@if (_msg is not null) { <div class="admin-flash">@_msg</div> }
+
+@if (_s is null)
+{
+    <p>Es gibt keinen Spielstand. Starte ein neues Spiel über die <a href="/">Startseite</a>.</p>
+    return;
+}
+
+<section class="admin-box">
+    <h2>Charakter</h2>
+    <div class="admin-form compact">
+        <label class="af"><span class="af-name">Name</span><input class="af-input" @bind="_s.Char.Name" /></label>
+        <label class="af"><span class="af-name">Stufe</span><input class="af-input num" type="number" min="1" @bind="_s.Char.Level" /></label>
+        <label class="af"><span class="af-name">EP (in der Stufe)</span><input class="af-input num" type="number" min="0" @bind="_s.Char.Xp" /></label>
+        <label class="af"><span class="af-name">LP <small>max. @MaxHp</small></span><input class="af-input num" type="number" min="1" @bind="_s.Char.Hp" /></label>
+        <label class="af"><span class="af-name">X</span><input class="af-input num" type="number" @bind="_s.Char.X" /></label>
+        <label class="af"><span class="af-name">Y <small>(negativ = Norden)</small></span><input class="af-input num" type="number" @bind="_s.Char.Y" /></label>
+        <label class="af"><span class="af-name">Freie Attributpunkte</span><input class="af-input num" type="number" min="0" @bind="_s.Char.AttributePoints" /></label>
+        <label class="af"><span class="af-name">Freie Fertigkeitspunkte</span><input class="af-input num" type="number" min="0" @bind="_s.Char.SkillPoints" /></label>
+    </div>
+    <div class="admin-actions">
+        <button class="btn btn-small" @onclick="() => _s.Char.Hp = MaxHp">Voll heilen</button>
+        <button class="btn btn-small" @onclick="() => { _s.Char.X = 0; _s.Char.Y = 0; }">Zum Bunker</button>
+    </div>
+    <p class="muted small">Seed @_s.Char.Seed · Züge @_s.Char.Turn · Siege @_s.Char.Kills · Tode @_s.Char.Deaths · angelegt @_s.Char.CreatedAt</p>
+</section>
+
+<div class="admin-two">
+    <section class="admin-box">
+        <h2>Attribute</h2>
+        <div class="admin-form compact">
+            @foreach (var a in Content.Attributes)
+            {
+                <label class="af"><span class="af-name">@a.Name</span>
+                    <input class="af-input num" type="number" min="0" value="@_s.Attributes.GetValueOrDefault(a.Key)" @onchange="e => _s.Attributes[a.Key] = ToInt(e)" /></label>
+            }
+        </div>
+    </section>
+    <section class="admin-box">
+        <h2>Fertigkeitsränge</h2>
+        <div class="admin-form compact">
+            @foreach (var sk in Content.Skills)
+            {
+                <label class="af"><span class="af-name">@sk.Name</span>
+                    <input class="af-input num" type="number" min="0" value="@_s.Skills.GetValueOrDefault(sk.Key)" @onchange="e => _s.Skills[sk.Key] = ToInt(e)" /></label>
+            }
+        </div>
+    </section>
+</div>
+
+<section class="admin-box">
+    <h2>Inventar</h2>
+    <table class="admin-table">
+        <thead><tr><th>Gegenstand</th><th>Stufe</th><th>Anzahl</th><th>Angelegt</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var it in _s.Inventory.ToList())
+            {
+                var d = Content.Items.GetValueOrDefault(it.ItemKey);
+                <tr>
+                    <td>@(d?.Name ?? $"{it.ItemKey} (existiert nicht!)") <span class="muted mono">@it.ItemKey</span></td>
+                    <td><input class="af-input num tiny" type="number" min="0" @bind="it.Level" /></td>
+                    <td><input class="af-input num tiny" type="number" min="1" @bind="it.Quantity" /></td>
+                    <td>@if (d?.IsEquippable == true) { <input type="checkbox" @bind="it.Equipped" /> }</td>
+                    <td><button class="btn btn-small btn-ghost" @onclick="() => _s.Inventory.Remove(it)">✕</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <div class="admin-actions add-row">
+        <select class="af-input" @bind="_addKey">
+            @foreach (var i in Content.Items.Values.OrderBy(i => i.Category).ThenBy(i => i.Name)) { <option value="@i.Key">@i.Name (@i.Category)</option> }
+        </select>
+        <label>Stufe <input class="af-input num tiny" type="number" min="0" @bind="_addLevel" /></label>
+        <label>Anzahl <input class="af-input num tiny" type="number" min="1" @bind="_addQty" /></label>
+        <button class="btn btn-small" @onclick="AddItem">Hinzufügen</button>
+    </div>
+</section>
+
+<section class="admin-box">
+    <h2>Fortschritt <span class="muted">wirkt sofort, ohne „Speichern“</span></h2>
+    <p>@_s.FoundLore.Count von @Content.Lore.Count Infofragmenten gefunden · @_s.Tiles.Count erkundete Felder, davon @_s.Tiles.Values.Count(f => f.HasFlag(TileFlags.Resolved)) erledigte Orte</p>
+    <div class="admin-actions">
+        <button class="btn btn-small" @onclick='() => Act(() => Saves.SetLore(Content.Lore.Select(l => l.Id)), "Alle Infofragmente freigeschaltet.")'>Alle Infofragmente freischalten</button>
+        <button class="btn btn-small" @onclick='() => Act(() => Saves.SetLore([]), "Journal geleert.")'>Journal leeren</button>
+        <button class="btn btn-small" @onclick='() => Act(() => Saves.ResetTiles(resolvedOnly: true), "Erledigte Orte wieder geöffnet.")'>Erledigte Orte wieder öffnen</button>
+        <button class="btn btn-small" @onclick='() => Act(() => Saves.ResetTiles(resolvedOnly: false), "Karte zurückgesetzt.")'>Karte komplett verdecken</button>
+    </div>
+</section>
+
+<section class="admin-box danger">
+    <h2>Spielstand löschen</h2>
+    @if (_confirmDelete)
+    {
+        <p><strong>Wirklich löschen?</strong> Das lässt sich nicht rückgängig machen.</p>
+        <div class="admin-actions">
+            <button class="btn btn-danger" @onclick="DeleteSave">Ja, löschen</button>
+            <button class="btn" @onclick="() => _confirmDelete = false">Abbrechen</button>
+        </div>
+    }
+    else
+    {
+        <button class="btn btn-danger" @onclick="() => _confirmDelete = true">Spielstand löschen …</button>
+    }
+</section>
+
+@code {
+    private GameState? _s;
+    private string? _msg;
+    private bool _confirmDelete;
+    private string _addKey = "";
+    private int _addLevel, _addQty = 1;
+
+    private int MaxHp => _s is null ? 1 : GameService.CalcMaxHp(Content, _s.Char.Level, _s.Attributes.GetValueOrDefault("end"));
+
+    protected override void OnInitialized() => Reload();
+
+    private void Reload()
+    {
+        _s = Saves.Load();
+        _addKey = Content.Items.Keys.FirstOrDefault() ?? "";
+    }
+
+    private static int ToInt(ChangeEventArgs e) => int.TryParse(e.Value?.ToString(), out var v) ? Math.Max(0, v) : 0;
+
+    private void AddItem()
+    {
+        if (_s is null || !Content.Items.ContainsKey(_addKey)) return;
+        long id = _s.Inventory.Count == 0 ? 1 : _s.Inventory.Max(i => i.Id) + 1;
+        _s.Inventory.Add(new InventoryItem { Id = id, ItemKey = _addKey, Level = Math.Max(0, _addLevel), Quantity = Math.Max(1, _addQty) });
+    }
+
+    private void Save()
+    {
+        if (_s is null) return;
+        _s.Char.Level = Math.Max(1, _s.Char.Level);
+        _s.Char.Hp = Math.Clamp(_s.Char.Hp, 1, MaxHp);
+        _s.Inventory.RemoveAll(i => i.Quantity <= 0);
+        // Pro Slot hoechstens ein angelegter Gegenstand
+        foreach (var g in _s.Inventory.Where(i => i.Equipped && Content.Items.GetValueOrDefault(i.ItemKey)?.Slot is not null)
+                     .GroupBy(i => Content.Items[i.ItemKey].Slot))
+            foreach (var extra in g.Skip(1)) extra.Equipped = false;
+        Saves.Save(_s);
+        Saves.NotifyExternalChange();
+        Reload();
+        _msg = "Spielstand gespeichert.";
+    }
+
+    private void Act(Action a, string msg)
+    {
+        a();
+        Saves.NotifyExternalChange();
+        Reload();
+        _msg = msg;
+    }
+
+    private void DeleteSave()
+    {
+        Saves.Delete();
+        Saves.NotifyExternalChange();
+        _confirmDelete = false;
+        Reload();
+        _msg = "Spielstand gelöscht.";
+    }
+}

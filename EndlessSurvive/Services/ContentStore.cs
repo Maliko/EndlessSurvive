@@ -24,6 +24,9 @@ public sealed class ContentStore
 
     public string DbPath { get; }
 
+    /// <summary>Steigt bei jedem Neuladen (z. B. nach Aenderungen in der Verwaltung).</summary>
+    public int Version { get; private set; }
+
     public ContentStore(IWebHostEnvironment env, IConfiguration config)
     {
         var dataDir = Path.Combine(env.ContentRootPath, "Data");
@@ -57,6 +60,7 @@ public sealed class ContentStore
         Events = events;
         Lore = c.Query<LoreDef>("SELECT * FROM Lore ORDER BY MinDanger, Id").ToList();
         Traders = c.Query<TraderDef>("SELECT * FROM Traders").ToDictionary(t => t.Key);
+        Version++;
     }
 
     public double Num(string key, double fallback = 0) =>

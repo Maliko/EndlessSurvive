@@ -1,0 +1,73 @@
+@page "/admin/t/{TableName}"
+@layout AdminLayout
+@inject ContentAdmin Admin
+@inject ContentValidator Validator
+@inject NavigationManager Nav
+
+<PageTitle>@(_t?.Label ?? TableName) – Verwaltung</PageTitle>
+
+@if (_t is null)
+{
+    <p>Tabelle „@TableName“ gibt es nicht.</p>
+    return;
+}
+
+<header class="admin-head">
+    <div class="admin-head-row">
+        <h1>@_t.Label <span class="muted">@_rows.Count Einträge</span></h1>
+        <a class="btn btn-primary" href="/admin/t/@_t.Name/new">+ Neu</a>
+    </div>
+    @if (_t.Description is not null) { <p class="muted">@_t.Description</p> }
+    <input class="af-input admin-search" placeholder="Suchen …" @bind="_search" @bind:event="oninput" />
+</header>
+
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th></th>
+                @foreach (var c in _cols) { <th>@c.Name</th> }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in Filtered)
+            {
+                var key = _t.Pk is null ? null : r.Text(_t.Pk.Name);
+                var issues = key is null ? null : _issues.GetValueOrDefault(key);
+                <tr @onclick='() => Nav.NavigateTo($"/admin/t/{_t.Name}/{r.RowId}")'>
+                    <td class="issue-cell">
+                        @if (issues is not null)
+                        {
+                            <span class="issue-dot @(issues.Any(i => i.Severity == Severity.Error) ? "bad" : "warn")"
+                                  title="@string.Join("\n", issues.Select(i => i.Message))">!</span>
+                        }
+                    </td>
+                    @foreach (var c in _cols) { <td><CellView Column="c" Row="r" /></td> }
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter] public string TableName { get; set; } = "";
+    private TableInfo? _t;
+    private IReadOnlyList<ContentRow> _rows = [];
+    private List<ColumnInfo> _cols = [];
+    private Dictionary<string, List<Issue>> _issues = new();
+    private string _search = "";
+
+    protected override void OnParametersSet()
+    {
+        _t = Admin.Table(TableName);
+        _search = "";
+        if (_t is null) return;
+        _rows = Admin.Rows(_t);
+        _cols = _t.DisplayColumns.Select(n => _t.Column(n)!).ToList();
+        _issues = Validator.Run().Where(i => i.Table == _t.Name && i.Key is not null)
+            .GroupBy(i => i.Key!).ToDictionary(g => g.Key, g => g.ToList());
+    }
+
+    private IEnumerable<ContentRow> Filtered => string.IsNullOrWhiteSpace(_search) ? _rows
+        : _rows.Where(r => r.Values.Values.Any(v => ContentAdmin.Format(v).Contains(_search, StringComparison.OrdinalIgnoreCase)));
+}

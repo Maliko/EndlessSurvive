@@ -1,0 +1,100 @@
+@page "/admin"
+@layout AdminLayout
+@inject ContentAdmin Admin
+@inject ContentValidator Validator
+@inject SaveStore Saves
+
+<PageTitle>Verwaltung – Endless Survive</PageTitle>
+
+<header class="admin-head">
+    <h1>Übersicht</h1>
+    <p class="muted">Alle Änderungen wirken sofort im laufenden Spiel. <code>content.sql</code> wird bei jeder Änderung automatisch neu geschrieben, vorher wird eine Sicherung angelegt (höchstens alle 10 Minuten).</p>
+</header>
+
+@if (_msg is not null) { <div class="admin-flash">@_msg</div> }
+
+<section class="admin-cards">
+    <a class="admin-card @(_errors > 0 ? "bad" : _warnings > 0 ? "warn" : "good")" href="/admin/check">
+        <span class="admin-card-num">@(_errors > 0 ? _errors : _warnings)</span>
+        <span>@(_errors > 0 ? "Fehler in den Inhalten" : _warnings > 0 ? "Hinweise zu den Inhalten" : "Inhalte fehlerfrei")</span>
+    </a>
+    <a class="admin-card" href="/admin/save">
+        @if (_save is not null)
+        {
+            <span class="admin-card-num">@_save.Level</span>
+            <span>@_save.Name · Stufe · Position @_save.X, @(-_save.Y)</span>
+        }
+        else
+        {
+            <span class="admin-card-num">–</span><span>Kein Spielstand</span>
+        }
+    </a>
+    @foreach (var t in Admin.Tables().Where(t => !t.IsMeta))
+    {
+        <a class="admin-card" href="/admin/t/@t.Name">
+            <span class="admin-card-num">@Admin.Rows(t).Count</span>
+            <span>@t.Label</span>
+        </a>
+    }
+</section>
+
+<section class="admin-box">
+    <h2>Werkzeuge</h2>
+    <div class="admin-actions">
+        <button class="btn" @onclick="Reload" title="Nach Bearbeitung von content.db mit einem externen Programm">Inhalte neu laden</button>
+        <button class="btn" @onclick="Export">content.sql jetzt schreiben</button>
+        <button class="btn" @onclick="BackupNow">Sicherung jetzt anlegen</button>
+    </div>
+</section>
+
+<section class="admin-box">
+    <h2>Sicherungen <span class="muted">Data/backups</span></h2>
+    @if (_backups.Count == 0)
+    {
+        <p class="muted">Noch keine Sicherungen.</p>
+    }
+    else
+    {
+        <ul class="admin-backups">
+            @foreach (var b in _backups)
+            {
+                <li>
+                    <span class="mono">@b</span>
+                    @if (_confirmRestore == b)
+                    {
+                        <span class="warn-text">Aktuelle Inhalte werden ersetzt (vorher gesichert).</span>
+                        <button class="btn btn-small btn-primary" @onclick="() => Restore(b)">Ja, wiederherstellen</button>
+                        <button class="btn btn-small" @onclick="() => _confirmRestore = null">Abbrechen</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-small" @onclick="() => _confirmRestore = b">Wiederherstellen</button>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</section>
+
+@code {
+    private int _errors, _warnings;
+    private CharacterState? _save;
+    private IReadOnlyList<string> _backups = [];
+    private string? _msg, _confirmRestore;
+
+    protected override void OnInitialized() => Refresh();
+
+    private void Refresh()
+    {
+        var issues = Validator.Run();
+        _errors = issues.Count(i => i.Severity == Severity.Error);
+        _warnings = issues.Count(i => i.Severity == Severity.Warning);
+        _save = Saves.PeekCharacter();
+        _backups = Admin.Backups();
+    }
+
+    private void Reload() { Admin.Reload(); Refresh(); _msg = "Inhalte neu geladen."; }
+    private void Export() { Admin.ExportSql(); _msg = "content.sql geschrieben."; }
+    private void BackupNow() { Admin.Backup(force: true); Refresh(); _msg = $"Sicherung {Admin.LastBackup} angelegt."; }
+    private void Restore(string b) { Admin.Restore(b); _confirmRestore = null; Refresh(); _msg = $"{b} wiederhergestellt."; }
+}

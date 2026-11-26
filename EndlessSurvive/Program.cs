@@ -1,5 +1,6 @@
 using EndlessSurvive.Components;
 using EndlessSurvive.Services;
+using EndlessSurvive.Services.Admin;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,6 +10,8 @@ builder.Services.AddRazorComponents()
 builder.Services.AddSingleton<ContentStore>();
 builder.Services.AddSingleton<SaveStore>();
 builder.Services.AddScoped<GameService>();
+builder.Services.AddSingleton<ContentAdmin>();
+builder.Services.AddTransient<ContentValidator>();
 
 var app = builder.Build();
 

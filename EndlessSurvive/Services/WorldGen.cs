@@ -14,6 +14,7 @@ public sealed class WorldGen
     private readonly ContentStore _c;
     private readonly long _seed;
     private readonly Dictionary<(int, int), TileInfo> _cache = new();
+    private int _contentVersion;
 
     public WorldGen(ContentStore content, long seed)
     {
@@ -23,6 +24,7 @@ public sealed class WorldGen
 
     public TileInfo Tile(int x, int y)
     {
+        if (_contentVersion != _c.Version) { _cache.Clear(); _contentVersion = _c.Version; } // Inhalte wurden neu geladen
         if (_cache.TryGetValue((x, y), out var t)) return t;
         t = Build(x, y);
         if (_cache.Count > 20000) _cache.Clear();

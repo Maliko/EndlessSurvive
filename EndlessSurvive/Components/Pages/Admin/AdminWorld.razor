@@ -1,0 +1,100 @@
+@page "/admin/world"
+@layout AdminLayout
+@inject ContentStore Content
+@inject SaveStore Saves
+
+<PageTitle>Weltvorschau – Verwaltung</PageTitle>
+
+<header class="admin-head">
+    <h1>Weltvorschau</h1>
+    <p class="muted">Zeigt, wie die Biom-Einstellungen eine Welt erzeugen. Praktisch zum Abstimmen von Höhen-/Feuchte-Bereichen, Prioritäten und Ereignisdichte. Ändert nichts am Spiel.</p>
+</header>
+
+<div class="admin-actions world-controls">
+    <label>Seed <input class="af-input num" @bind="_seed" /></label>
+    <button class="btn btn-small" @onclick="() => _seed = Random.Shared.NextInt64(1, long.MaxValue)">Zufällig</button>
+    @if (_saveSeed is not null) { <button class="btn btn-small" @onclick="() => _seed = _saveSeed.Value">Seed des Spielstands</button> }
+    <label>Mitte X <input class="af-input num tiny" type="number" @bind="_cx" /></label>
+    <label>Y <input class="af-input num tiny" type="number" @bind="_cy" /></label>
+    <span class="dpad-mini">
+        <button class="btn btn-small" @onclick="() => _cy -= H / 2">▲</button>
+        <button class="btn btn-small" @onclick="() => _cx -= W / 2">◀</button>
+        <button class="btn btn-small" @onclick="() => _cx += W / 2">▶</button>
+        <button class="btn btn-small" @onclick="() => _cy += H / 2">▼</button>
+    </span>
+    <label>Ansicht
+        <select class="af-input" @bind="_mode">
+            <option value="biome">Biome</option>
+            <option value="danger">Gefahrenstufe</option>
+        </select>
+    </label>
+    <label class="af-check"><input type="checkbox" @bind="_showPoi" /> Orte</label>
+</div>
+
+@{
+    var world = new WorldGen(Content, _seed);
+    var counts = new Dictionary<string, int>();
+    var pois = new Dictionary<string, int>();
+    int maxDanger = 0;
+    var tiles = new List<TileInfo>(W * H);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+        {
+            var t = world.Tile(_cx + x - W / 2, _cy + y - H / 2);
+            tiles.Add(t);
+            counts[t.Biome.Key] = counts.GetValueOrDefault(t.Biome.Key) + 1;
+            if (t.Poi is not null) pois[t.Poi.Key] = pois.GetValueOrDefault(t.Poi.Key) + 1;
+            maxDanger = Math.Max(maxDanger, t.Danger);
+        }
+}
+<div class="world-layout">
+    <svg class="world-map" viewBox="0 0 @(W * S) @(H * S)">
+        @foreach (var t in tiles)
+        {
+            int px = (t.X - _cx + W / 2) * S, py = (t.Y - _cy + H / 2) * S;
+            <rect x="@px" y="@py" width="@S" height="@S" fill="@(_mode == "danger" ? DangerColor(t.Danger, maxDanger) : t.Biome.Color)" />
+            @if (_showPoi && t.Poi is not null) { <circle cx="@(px + S / 2)" cy="@(py + S / 2)" r="1.6" fill="#f2b43a" /> }
+            @if (t.X == 0 && t.Y == 0) { <rect x="@(px - 2)" y="@(py - 2)" width="@(S + 4)" height="@(S + 4)" fill="none" stroke="#f2b43a" stroke-width="2" /> }
+        }
+    </svg>
+    <aside class="admin-box world-legend">
+        <h2>Biome</h2>
+        <ul>
+            @foreach (var b in Content.Biomes.Where(b => counts.ContainsKey(b.Key)).OrderByDescending(b => counts[b.Key]))
+            {
+                <li><span class="swatch" style="background:@b.Color"></span> <a href="/admin/t/Biomes/find?key=@b.Key">@b.Name</a>
+                    <span class="mono muted">@(counts[b.Key] * 100 / (W * H)) %</span></li>
+            }
+        </ul>
+        <h2>Orte <span class="muted">@pois.Values.Sum()</span></h2>
+        <ul>
+            @foreach (var (k, n) in pois.OrderByDescending(p => p.Value))
+            {
+                <li><a href="/admin/t/Events/find?key=@k">@(Content.Events.GetValueOrDefault(k)?.Title ?? k)</a> <span class="mono muted">@n</span></li>
+            }
+        </ul>
+        <p class="muted small">Gefahrenstufe im Ausschnitt bis @maxDanger. Gelber Rahmen = Bunker.</p>
+    </aside>
+</div>
+
+@code {
+    private const int W = 110, H = 70, S = 8;
+    private long _seed = 12345;
+    private long? _saveSeed;
+    private int _cx, _cy;
+    private string _mode = "biome";
+    private bool _showPoi = true;
+
+    protected override void OnInitialized()
+    {
+        _saveSeed = Saves.PeekCharacter()?.Seed;
+        if (_saveSeed is not null) _seed = _saveSeed.Value;
+    }
+
+    private static string DangerColor(int d, int max)
+    {
+        double f = max == 0 ? 0 : (double)d / max;
+        int r = (int)(40 + 200 * f), g = (int)(90 - 60 * f), b = (int)(60 - 30 * f);
+        return $"rgb({r},{g},{b})";
+    }
+}

@@ -6,7 +6,7 @@ namespace EndlessSurvive.Services;
 /// <summary>
 /// Die Spielregeln. Ein Exemplar pro Browser-Verbindung (scoped).
 /// </summary>
-public sealed class GameService
+public sealed class GameService : IDisposable
 {
     private readonly ContentStore _c;
     private readonly SaveStore _store;
@@ -21,6 +21,20 @@ public sealed class GameService
     {
         _c = content;
         _store = store;
+        _store.ExternallyChanged += OnSaveChangedExternally;
+    }
+
+    public void Dispose() => _store.ExternallyChanged -= OnSaveChangedExternally;
+
+    /// <summary>Spielstand wurde in der Verwaltung geaendert: neu laden, offene Dialoge verwerfen.</summary>
+    private void OnSaveChangedExternally()
+    {
+        if (State is null) return;
+        State = null; World = null;
+        Event = null; Combat = null; Trade = null;
+        _effects.Clear(); _notices.Clear();
+        Load();
+        Changed?.Invoke();
     }
 
     public ContentStore Content => _c;
@@ -98,8 +112,11 @@ public sealed class GameService
         return _c.Int("SkillBase", 10) + Attr(sk.AttributeKey) * _c.Int("SkillPerAttribute", 3) + Ranks(key) * _c.Int("SkillPerRank", 4);
     }
 
-    public int MaxHp => State is null ? 1 :
-        _c.Int("HpBase", 20) + Attr("end") * _c.Int("HpPerEndurance", 4) + (State.Char.Level - 1) * _c.Int("HpPerLevel", 3);
+    public int MaxHp => State is null ? 1 : CalcMaxHp(_c, State.Char.Level, Attr("end"));
+
+    /// <summary>Maximale Lebenspunkte (auch von der Verwaltung benutzt).</summary>
+    public static int CalcMaxHp(ContentStore c, int level, int endurance) =>
+        c.Int("HpBase", 20) + endurance * c.Int("HpPerEndurance", 4) + (level - 1) * c.Int("HpPerLevel", 3);
 
     public long XpForNext(int level) => (long)Math.Round(_c.Num("XpBase", 100) * Math.Pow(level, _c.Num("XpExponent", 1.6)));
 

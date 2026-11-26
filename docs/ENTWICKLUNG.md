@@ -12,6 +12,7 @@ Diese Doku erklärt, wie der Code aufgebaut ist und wo du anfasst, wenn du das S
 6. [Formeln](#6-formeln)
 7. [Rezepte: typische Erweiterungen](#7-rezepte-typische-erweiterungen)
 7a. [Beispiel einer größeren Erweiterung: Tauschhändler](#7a-beispiel-einer-größeren-erweiterung-tauschhändler)
+7b. [Die Verwaltung](#7b-die-verwaltung)
 8. [Stolperfallen](#8-stolperfallen)
 9. [Testen](#9-testen)
 
@@ -30,9 +31,9 @@ cd EndlessSurvive
 dotnet watch
 ```
 
-Änderungen an `.razor`, `.cs` und `app.css` werden meist ohne Neustart übernommen. Änderungen an `content.db` werden **erst beim Neustart** geladen, weil `ContentStore` die Inhalte einmalig in den Speicher liest.
+Änderungen an `.razor`, `.cs` und `app.css` werden meist ohne Neustart übernommen. Änderungen über die Verwaltung (`/admin`) wirken sofort. Änderungen an `content.db` mit einem externen Werkzeug werden erst nach „Inhalte neu laden“ in der Verwaltung oder nach einem Neustart sichtbar, weil `ContentStore` die Inhalte in den Speicher liest.
 
-Spielstand zurücksetzen: Server stoppen und `EndlessSurvive/Data/save.db` löschen. Alternativ im Spiel „Neues Spiel“ wählen.
+Spielstand zurücksetzen: in der Verwaltung unter „Spielstand“, im Spiel über „Neues Spiel“ oder bei **gestopptem** Server `EndlessSurvive/Data/save.db` löschen. Bei laufendem Server die Datei nicht löschen: Der Server hält sie offen und meldet dann „readonly database“.
 
 ---
 
@@ -56,7 +57,8 @@ Browser  ──SignalR──►  Blazor-Komponenten  ──►  GameService (Reg
 |---|---|---|
 | `ContentStore` | Singleton | Lädt beim Start alle Tabellen aus `content.db` in den Speicher. Erzeugt `content.db` aus `content.sql`, falls sie fehlt. |
 | `SaveStore` | Singleton | Legt `save.db` an und liest/schreibt den kompletten Spielstand. |
-| `GameService` | Scoped (pro Browser-Verbindung) | **Alle Spielregeln.** Hält den Spielzustand und die offenen Dialoge (Ereignis, Kampf, Hinweis). |
+| `GameService` | Scoped (pro Browser-Verbindung) | **Alle Spielregeln.** Hält den Spielzustand und die offenen Dialoge (Ereignis, Kampf, Handel, Hinweis). |
+| `ContentAdmin` | Singleton | Verwaltung: schreibt in `content.db`, sichert, exportiert `content.sql`, lädt `ContentStore` neu (siehe [7b](#7b-die-verwaltung)). |
 | `WorldGen` | pro Spielstand | Berechnet für jede Koordinate Biom, Gefahrenstufe und ggf. einen Ort. Rein deterministisch. |
 | `Dice` / `WorldHash` | – | `Dice` ist echter Zufall (Würfe), `WorldHash` ist deterministischer Zufall (Welt). |
 
@@ -76,6 +78,7 @@ EndlessSurvive/
     SaveStore.cs               Persistenz
     WorldGen.cs                Prozedurale Welt
     Rng.cs                     Dice, WorldHash
+    Admin/                     ContentAdmin, ContentValidator, EffectCatalog
   Components/
     App.razor                  HTML-Gerüst, Render-Modus
     Pages/Home.razor           Titelbildschirm  (/)
@@ -83,6 +86,8 @@ EndlessSurvive/
     Pages/GamePage.razor       Spielansicht (/game), Tastatur, Dialog-Auswahl
     Game/*.razor               Karte, Dialoge, Panels
     Game/GameComponent.cs      Basisklasse: rendert bei Zustandsänderung neu
+    Admin/                     Layout und Eingabefelder der Verwaltung
+    Pages/Admin/               Seiten der Verwaltung (/admin …)
   wwwroot/app.css              gesamtes Styling
   wwwroot/game.js              Tastatur- und Fenstergrößen-Weiterleitung an Blazor
 ```
@@ -242,7 +247,7 @@ Alle Zahlen in eckigen Klammern sind Schlüssel aus der Tabelle `Settings`.
 
 ### Neuer Inhalt (Gegenstand, Gegner, Ereignis, Biom, Lore)
 
-Kein Code nötig, siehe README. Nur neue Zeilen in `content.db` bzw. `content.sql`.
+Kein Code nötig. Über die Verwaltung anlegen, siehe README.
 
 ### Neuer Effekt-Typ für Ereignisse
 
@@ -260,23 +265,35 @@ Beispiel: `skillxp:hacking:1` soll einen Fertigkeitsrang schenken.
        break;
    ```
 
-2. Den Effekt in der Kommentar-Tabelle oben in `content.sql` und in der README dokumentieren.
-3. In `EventOptions` verwenden: `SuccessEffects = 'skillxp:hacking:1;xp:10'`.
+2. Den Effekt in `Services/Admin/EffectCatalog.cs` eintragen: in der Liste `All` (Hilfetext in der Verwaltung) **und** als `case` in `Validate`. Sonst meldet die Inhaltsprüfung ihn als „unbekannter Effekt“.
+
+   ```csharp
+   new("skillxp", "skillxp:SKILL:N", "Fertigkeitsrang geschenkt"),
+   ...
+   case "skillxp":
+       if (c.Skill(Arg(1)) is null) yield return $"„{raw}“: Fertigkeit „{Arg(1)}“ existiert nicht";
+       break;
+   ```
+
+3. In der README in der Effekt-Liste ergänzen.
+4. In der Verwaltung bei einer Ereignis-Option verwenden: `skillxp:hacking:1;xp:10`.
 
 Gibt `ApplyEffect` `true` zurück, pausiert die Warteschlange. Das brauchst du nur für Effekte, die einen eigenen Dialog öffnen (wie `combat`).
 
 ### Neuer Balancing-Wert
 
-1. Zeile in `Settings` ergänzen (in `content.sql` **und** in `content.db`).
+1. In der Verwaltung unter „Regeln & Balancing“ eine Zeile anlegen.
 2. Im Code mit Fallback lesen: `_c.Num("MeinWert", 1.0)`.
 
 ### Neue Spalte in einer Inhaltstabelle
 
 Beispiel: Gegner sollen eine Spalte `Poison` bekommen.
 
-1. `ALTER TABLE Enemies ADD COLUMN Poison INTEGER NOT NULL DEFAULT 0;` in `content.db` ausführen und die Spalte in `content.sql` ergänzen.
+1. `ALTER TABLE Enemies ADD COLUMN Poison INTEGER NOT NULL DEFAULT 0;` in `content.db` ausführen, z. B. mit DB Browser for SQLite. Danach in der Verwaltung „Inhalte neu laden“ und „content.sql jetzt schreiben“.
 2. Property `public int Poison { get; set; }` in `EnemyDef` (`Models/ContentModels.cs`). Dapper mappt per Spaltenname.
 3. In `GameService` verwenden.
+4. Optional: In der Verwaltung unter „Spaltenbeschreibungen“ eine Zeile für `Enemies` / `Poison` mit Hilfetext und Eingabefeld-Typ anlegen. Die Spalte erscheint auch ohne diesen Eintrag im Editor, dann als einfaches Zahlenfeld.
+5. Falls die Inhaltsprüfung die neue Spalte prüfen soll: Regel in `ContentValidator.cs` ergänzen.
 
 ### Neuer Wert im Spielstand
 
@@ -322,7 +339,7 @@ Die Rezepte oben reichen, solange du vorhandene Mechaniken kombinierst. Eine **n
 ### Was geändert wurde, Schritt für Schritt
 
 **1. Datenbank** (`content.sql` / `content.db`)
-- `Items` bekam die Spalte `Value` (Tauschwert). Die Werte stehen als `UPDATE`-Zeilen direkt unter den Item-Inserts.
+- `Items` bekam die Spalte `Value` (Tauschwert).
 - Neue Tabelle `Traders`.
 - Neuer Balancing-Wert `ItemValuePerLevel` in `Settings`.
 - Zwei Ereignisse, die den neuen Effekt nutzen: `wandering_trader` (Begegnung) und `trader_post` (fester Ort mit `persist`, bleibt also auf der Karte).
@@ -353,13 +370,73 @@ Die Rezepte oben reichen, solange du vorhandene Mechaniken kombinierst. Eine **n
 ### Checkliste für deine eigene Erweiterung
 
 1. Trennen: Was ist Regel (Code), was ist Inhalt (Datenbank)?
-2. Neue Tabellen/Spalten in `content.sql` anlegen, `content.db` neu erzeugen, Modellklasse ergänzen, in `ContentStore` laden.
+2. Neue Tabellen/Spalten per SQL in `content.db` anlegen (danach „Inhalte neu laden“ und „content.sql jetzt schreiben“ in der Verwaltung), Modellklasse ergänzen, in `ContentStore` laden. Die Verwaltung zeigt die neue Tabelle sofort an.
 3. Braucht die Mechanik einen eigenen Dialog? Dann ein Laufzeitobjekt in `GameState.cs` und eine Property in `GameService`, und sie in `Busy` und `Notice` berücksichtigen.
 4. Einstieg über einen neuen Effekt in `ApplyEffect`. So bestimmt die Datenbank, wann die Mechanik ausgelöst wird.
 5. Muss etwas über das Neuladen hinaus erhalten bleiben? Dann `SaveStore` erweitern (siehe Rezept „Neuer Wert im Spielstand“).
 6. Dialog-Komponente mit `@inherits GameComponent`, in `GamePage.razor` einhängen, Tasten in `OnKey`.
 7. Jede zustandsändernde Methode endet mit `Persist()`. Reine Auswahländerungen, die nichts speichern müssen, rufen nur `Changed?.Invoke()` auf.
-8. Effekt und Tabellen in README und `content.sql` dokumentieren.
+8. Effekt in `EffectCatalog.cs` eintragen. Spalten in `_ColumnDocs` beschreiben. Sinnvolle Prüfungen in `ContentValidator.cs` ergänzen. README aktualisieren.
+
+---
+
+## 7b. Die Verwaltung
+
+Die Verwaltung unter `/admin` arbeitet **generisch auf dem Datenbankschema**. Sie kennt keine einzelnen Tabellen, sondern liest Tabellen, Spalten, Typen und Fremdschlüssel direkt aus SQLite. Deshalb erscheint eine neue Tabelle oder Spalte automatisch, ohne Codeänderung.
+
+### Bausteine
+
+| Datei | Aufgabe |
+|---|---|
+| `Services/Admin/ContentAdmin.cs` | Liest das Schema (`TableInfo`, `ColumnInfo`). Liest und schreibt Zeilen, sichert, exportiert `content.sql`, lädt `ContentStore` nach jeder Änderung neu. |
+| `Services/Admin/ContentValidator.cs` | Inhaltsprüfung. Arbeitet auf den geladenen Objekten aus `ContentStore`. |
+| `Services/Admin/EffectCatalog.cs` | Liste und Prüfung der Effekt-Sprache (Hilfe im Editor, Live-Prüfung, Inhaltsprüfung). |
+| `Components/Admin/AdminLayout.razor` | Layout mit Menü. Die Gruppen kommen aus `_TableDocs.GroupName`. |
+| `Components/Admin/AdminField.razor` | Ein Eingabefeld. Wählt die Darstellung anhand von `ColumnInfo.Editor`. |
+| `Components/Admin/CellView.razor` | Darstellung einer Zelle in Listen (Farbfeld, SVG-Vorschau, Häkchen). |
+| `Components/Pages/Admin/*.razor` | Seiten: Übersicht, Liste, Zeilen-Editor, Prüfung, Spielstand, Weltvorschau |
+
+### Meta-Tabellen
+
+Beschriftungen und Eingabefelder stehen selbst in der Datenbank und sind in der Verwaltung bearbeitbar:
+
+- **`_TableDocs`**: Anzeigename, Menügruppe, Beschreibung, Spalten der Listenansicht und Reihenfolge je Tabelle. Tabellen ohne Eintrag landen in der Gruppe „Weitere“ und zeigen die ersten sechs Spalten.
+- **`_ColumnDocs`**: Hilfetext und Eingabefeld-Typ (`Editor`) je Spalte.
+
+| Editor | Eingabefeld |
+|---|---|
+| *(leer)* | automatisch nach Spaltentyp: Text oder Zahl |
+| `multiline` | mehrzeiliges Textfeld |
+| `bool` | Häkchen (speichert 0/1) |
+| `color` | Farbwähler + Textfeld |
+| `enum:a,b,c` | Auswahlliste mit festen Werten |
+| `ref:Tabelle` | Auswahlliste mit den Schlüsseln einer Tabelle. Echte Fremdschlüssel werden auch ohne diesen Eintrag erkannt. |
+| `biomes` | Häkchen je Biom oder „überall (*)“, speichert eine kommagetrennte Liste |
+| `cats` | wie `biomes`, aber für Kategorien und Slots |
+| `effects` | Effekt-Feld mit Live-Prüfung und Hilfe |
+| `svg:48` / `svg:64` | SVG-Code mit Vorschau |
+
+Einen neuen Editor-Typ baust du in `AdminField.razor` als weiteren Zweig ein.
+
+### Wie Änderungen ins Spiel kommen
+
+1. `ContentAdmin.Insert/Update/Delete` schreibt in `content.db`, vorher ggf. eine Sicherung.
+2. `ExportSql()` schreibt `content.sql` neu. Die Tabellen werden so sortiert, dass referenzierte Tabellen zuerst kommen. Die `CREATE TABLE`-Anweisungen werden wörtlich aus SQLite übernommen, einschließlich der Kommentare darin.
+3. `ContentStore.Load()` lädt alles neu und erhöht `ContentStore.Version`.
+4. `WorldGen` bemerkt die neue Version und leert seinen Cache. Ab dem nächsten Schritt gelten die neuen Biome und Ereignisse.
+
+Ein bereits geöffneter Dialog (Ereignis, Kampf, Handel) läuft mit den alten Werten zu Ende.
+
+### Spielstand ändern, während das Spiel läuft
+
+Der Spielstand-Editor schreibt über `SaveStore.Save` und ruft danach `SaveStore.NotifyExternalChange()` auf. Jeder `GameService` hört auf dieses Ereignis und lädt den Spielstand neu (`OnSaveChangedExternally`). Offene Dialoge werden dabei verworfen. Ohne diesen Mechanismus würde das offene Spiel die Änderungen beim nächsten Zug mit seinem alten Stand überschreiben. Wenn du an anderer Stelle `save.db` von außen änderst, rufe ebenfalls `NotifyExternalChange()` auf.
+
+### Bewusste Einschränkungen
+
+- **Schlüssel sind nach dem Anlegen fest.** Andere Einträge, Effekte und Biom-Listen verweisen per Text darauf. Zum Umbenennen: „Duplizieren“, Verweise umstellen, Original löschen. Die Inhaltsprüfung zeigt vergessene Verweise.
+- **Löschen** entfernt Einträge, die per Pflicht-Fremdschlüssel abhängen, gleich mit (z. B. die Optionen eines Ereignisses). Optionale Verweise werden geleert. Verweise in Textfeldern (Effekte, Biom-Listen) bleiben stehen und tauchen in der Inhaltsprüfung auf.
+- **Tabellen und Spalten anlegen** geht nicht in der Verwaltung, sondern per SQL (siehe Rezept „Neue Spalte“). Das ist Absicht: Neue Spalten brauchen ohnehin Code, der sie benutzt.
+- **Kein Login.** Siehe README.
 
 ---
 
@@ -378,9 +455,9 @@ Die Rezepte oben reichen, solange du vorhandene Mechaniken kombinierst. Eine **n
 
 **Weltgenerierung und bestehende Spielstände.** Die Welt wird bei jedem Laden aus dem Seed neu berechnet. Wenn du Biom-Bereiche, `EventChance`, die Rauschparameter in `WorldGen` oder die Liste der `poi`-Ereignisse änderst, sieht die Welt eines **bestehenden** Spielstands danach anders aus. Erkundete und erledigte Felder bleiben gespeichert, aber Gelände und Orte können sich verschieben. Für Tests egal, für einen laufenden Spielstand ggf. ärgerlich.
 
-**`content.sql` und `content.db` synchron halten.** Das Spiel liest nur `content.db`. `content.sql` wird nur benutzt, wenn `content.db` fehlt. Wenn du an einer Datei arbeitest, übertrage die Änderung auch in die andere, oder entscheide dich bewusst für eine davon als Quelle. Am einfachsten: nur `content.sql` bearbeiten und danach `content.db` löschen.
+**`content.db` ist die Quelle, `content.sql` wird erzeugt.** Das Spiel liest nur `content.db`. Die Verwaltung schreibt `content.sql` bei jeder Änderung komplett neu. Handänderungen an `content.sql` gehen dabei verloren, es sei denn, du hast vorher `content.db` gelöscht und neu erzeugen lassen. Kommentare gehören deshalb nicht in `content.sql`, sondern in `_TableDocs` / `_ColumnDocs`. Kommentare innerhalb von `CREATE TABLE` bleiben erhalten.
 
-**Effekt-Strings werden nicht validiert.** Ein Tippfehler wie `lot:2` wird stillschweigend ignoriert. Nach dem Anlegen eines Ereignisses einmal im Spiel ausprobieren.
+**Effekt-Tippfehler stören das Spiel nicht, verpuffen aber.** Ein Effekt wie `lot:2` wird im Spiel stillschweigend ignoriert. Die Verwaltung markiert ihn beim Eintippen, und die Inhaltsprüfung listet ihn auf.
 
 **Proben ohne Fertigkeit gelingen immer.** Wenn `SkillKey` leer ist (`NULL`), werden nur `SuccessText`/`SuccessEffects` benutzt.
 

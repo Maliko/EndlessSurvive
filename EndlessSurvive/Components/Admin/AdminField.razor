@@ -1,0 +1,133 @@
+@inject ContentAdmin Admin
+@inject ContentStore Content
+
+@{
+    var ed = Column.Editor;
+    var nullable = !Column.NotNull;
+}
+<div class="af @(Wide ? "af-wide" : "") @(Error is null ? "" : "af-error")">
+    <label class="af-label">
+        <span class="af-name">@Column.Name @if (Column.NotNull && Column.Default is null && !ReadOnly) { <b title="Pflichtfeld">*</b> }</span>
+        @if (Column.Description is not null) { <small>@Column.Description</small> }
+    </label>
+
+    @if (ReadOnly)
+    {
+        <input class="af-input" value="@Value" disabled />
+    }
+    else if (ed == "multiline")
+    {
+        <textarea class="af-input" rows="3" value="@Value" @onchange="Set"></textarea>
+    }
+    else if (ed == "bool")
+    {
+        <label class="af-check"><input type="checkbox" checked="@(Value == "1")" @onchange='e => SetValue((bool)e.Value! ? "1" : "0")' /> ja</label>
+    }
+    else if (ed == "color")
+    {
+        <div class="af-row">
+            <input type="color" value="@ColorForPicker" @onchange="Set" />
+            <input class="af-input" value="@Value" @onchange="Set" />
+        </div>
+    }
+    else if (ed.StartsWith("enum:"))
+    {
+        <select class="af-input" value="@Value" @onchange="Set">
+            @if (nullable) { <option value="">(leer)</option> }
+            @foreach (var o in ed[5..].Split(',')) { <option value="@o">@o</option> }
+            @if (!string.IsNullOrEmpty(Value) && !ed[5..].Split(',').Contains(Value)) { <option value="@Value">@Value (unbekannt)</option> }
+        </select>
+    }
+    else if (Column.RefTable is { } rt)
+    {
+        var opts = Admin.RefOptions(rt);
+        <select class="af-input" value="@Value" @onchange="Set">
+            @if (nullable || !Column.NotNull) { <option value="">(keine)</option> }
+            @foreach (var o in opts) { <option value="@o.Value">@o.Label</option> }
+            @if (!string.IsNullOrEmpty(Value) && opts.All(o => o.Value != Value)) { <option value="@Value">@Value (existiert nicht!)</option> }
+        </select>
+    }
+    else if (ed is "biomes" or "cats")
+    {
+        var all = ed == "biomes" ? Content.Biomes.Select(b => (b.Key, b.Name)).ToList()
+            : EffectCatalog.Categories.Concat(EffectCatalog.Slots).Select(k => (k, k)).ToList();
+        bool star = (Value ?? "").Trim() == "*";
+        var sel = (Value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+        <div class="af-multi">
+            <label class="af-check strong"><input type="checkbox" checked="@star" @onchange='e => SetValue((bool)e.Value! ? "*" : "")' /> überall / alles (*)</label>
+            @if (!star)
+            {
+                @foreach (var (k, n) in all)
+                {
+                    <label class="af-check"><input type="checkbox" checked="@sel.Contains(k)" @onchange="e => Toggle(sel, k, (bool)e.Value!)" /> @n</label>
+                }
+            }
+        </div>
+    }
+    else if (ed == "effects")
+    {
+        <textarea class="af-input mono" rows="2" value="@Value" @oninput="Set" placeholder="z. B. loot:2;xp:15"></textarea>
+        var problems = EffectCatalog.Validate(Value, Content).ToList();
+        @foreach (var p in problems) { <div class="af-msg bad">@p</div> }
+        @if (problems.Count == 0 && !string.IsNullOrWhiteSpace(Value)) { <div class="af-msg good">Effekte gültig</div> }
+        <details class="af-help">
+            <summary>Verfügbare Effekte</summary>
+            <dl>
+                @foreach (var e in EffectCatalog.All) { <dt>@e.Syntax</dt><dd>@e.Description</dd> }
+            </dl>
+            <p>Mehrere Effekte mit Semikolon trennen. Gegner: @string.Join(", ", Content.Enemies.Keys) · Händler: @string.Join(", ", Content.Traders.Keys)</p>
+        </details>
+    }
+    else if (ed.StartsWith("svg:"))
+    {
+        var size = ed == "svg:64" ? 64 : 48;
+        <div class="af-svg">
+            <textarea class="af-input mono" rows="4" value="@Value" @oninput="Set"></textarea>
+            <svg viewBox="0 0 @size @size" style="background:@(PreviewBackground ?? "#222");color:@(PreviewColor ?? "#ccc")">
+                @((MarkupString)(Value ?? ""))
+            </svg>
+        </div>
+    }
+    else
+    {
+        <input class="af-input @(Column.IsInteger || Column.IsReal ? "num" : "")" value="@Value" @onchange="Set"
+               inputmode="@(Column.IsInteger ? "numeric" : Column.IsReal ? "decimal" : "text")" />
+    }
+    @if (Error is not null) { <div class="af-msg bad">@Error</div> }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ColumnInfo Column { get; set; } = default!;
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public string? PreviewBackground { get; set; }
+    [Parameter] public string? PreviewColor { get; set; }
+
+    private bool Wide => Column.Editor is "multiline" or "effects" or "biomes" or "cats" || Column.Editor.StartsWith("svg:");
+
+    private string ColorForPicker
+    {
+        get
+        {
+            var v = (Value ?? "").Trim();
+            if (v.Length == 4 && v[0] == '#') return $"#{v[1]}{v[1]}{v[2]}{v[2]}{v[3]}{v[3]}";
+            return v.Length == 7 && v[0] == '#' ? v : "#000000";
+        }
+    }
+
+    private Task Set(ChangeEventArgs e) => SetValue(e.Value?.ToString());
+
+    private Task SetValue(string? v)
+    {
+        Value = v;
+        return ValueChanged.InvokeAsync(v);
+    }
+
+    private Task Toggle(HashSet<string> sel, string key, bool on)
+    {
+        if (on) sel.Add(key); else sel.Remove(key);
+        return SetValue(string.Join(",", sel));
+    }
+}

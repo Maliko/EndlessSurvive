@@ -13,7 +13,7 @@ cd EndlessSurvive
 dotnet run
 ```
 
-Dann im Browser **http://localhost:5080** öffnen.
+Dann im Browser **http://localhost:5080** öffnen. Die Verwaltung erreichst du unter **http://localhost:5080/admin** (Link unten rechts auf der Startseite).
 
 ## Spielprinzip
 
@@ -37,14 +37,34 @@ Dann im Browser **http://localhost:5080** öffnen.
 | Datei | Inhalt | Im Repo? |
 |---|---|---|
 | `EndlessSurvive/Data/content.db` | **Alle Spielinhalte** und Balancing-Werte | ja |
-| `EndlessSurvive/Data/content.sql` | Lesbare Quelle, aus der `content.db` erzeugt wurde | ja |
+| `EndlessSurvive/Data/content.sql` | Lesbarer Abzug von `content.db`, wird von der Verwaltung automatisch aktuell gehalten | ja |
 | `EndlessSurvive/Data/save.db` | Spielstand, wird beim ersten Start automatisch angelegt | nein (`.gitignore`) |
+| `EndlessSurvive/Data/backups/` | Automatische Sicherungen von `content.db` aus der Verwaltung | nein (`.gitignore`) |
 
 Spielstand und Inhalte liegen in getrennten Dateien. So ändert das Spielen nichts an der eingecheckten Inhaltsdatenbank.
 
+## Verwaltung (`/admin`)
+
+In der Verwaltung pflegst du alle Inhalte im Browser, ohne SQL:
+
+| Bereich | Was du dort machst |
+|---|---|
+| **Tabellen** | Jede Tabelle aus `content.db` anlegen, bearbeiten, duplizieren, löschen. Die Eingabefelder passen sich an: Auswahllisten für Verweise, Häkchen für Biome, Farbwähler, SVG-Vorschau, Live-Prüfung von Effekten. Neue Tabellen und Spalten erscheinen automatisch. |
+| **Inhaltsprüfung** | Findet Fehler, bevor sie im Spiel auffallen: kaputte Verweise, ungültige Effekte, fehlerhafte SVGs, Min > Max, fehlende Schlüssel, die der Code braucht. |
+| **Spielstand** | Charakterwerte, Attribute, Fertigkeiten und Inventar ändern, Infofragmente freischalten, Karte zurücksetzen, Spielstand löschen. Ein offenes Spiel übernimmt die Änderungen sofort. |
+| **Weltvorschau** | Große Kartenansicht für beliebige Seeds, nach Biom oder Gefahrenstufe eingefärbt, mit Biom-Anteilen und Ortsstatistik. Zum Abstimmen der Biom-Einstellungen. |
+| **Übersicht** | Sicherungen anlegen und wiederherstellen, Inhalte neu laden, `content.sql` schreiben. |
+
+Jede Änderung wirkt **sofort im laufenden Spiel**. Vorher wird `content.db` gesichert (höchstens alle 10 Minuten, die letzten 20 Sicherungen bleiben). Danach wird `content.sql` neu geschrieben. So bleiben beide Dateien synchron, und in git siehst du jede Inhaltsänderung als lesbaren Text-Diff.
+
+Die Verwaltung hat **keinen Login**. Das passt, solange das Spiel nur lokal läuft. Machst du es im Netzwerk erreichbar, muss `/admin` zuerst geschützt werden.
+
 ## Neue Inhalte hinzufügen
 
-Der Code enthält keine Inhalte, nur Regeln. **Neue Inhalte sind ausschließlich neue Zeilen in `content.db`.** Du kannst die Datei z. B. mit [DB Browser for SQLite](https://sqlitebrowser.org/) bearbeiten. Alternativ änderst du `content.sql`, löschst `content.db` und startest das Spiel neu. Fehlt `content.db`, wird sie beim Start automatisch aus `content.sql` erzeugt.
+Der Code enthält keine Inhalte, nur Regeln. **Neue Inhalte sind ausschließlich neue Zeilen in `content.db`.** Am bequemsten geht das über die Verwaltung. Alternativ:
+
+- **Externes Werkzeug**, z. B. [DB Browser for SQLite](https://sqlitebrowser.org/): `content.db` bearbeiten, dann in der Verwaltung „Inhalte neu laden“ und „content.sql jetzt schreiben“ klicken.
+- **Von Hand in `content.sql`**: Server stoppen, `content.db` löschen, Server starten. Fehlt `content.db`, wird sie aus `content.sql` erzeugt.
 
 | Tabelle | Wofür |
 |---|---|
@@ -57,6 +77,7 @@ Der Code enthält keine Inhalte, nur Regeln. **Neue Inhalte sind ausschließlich
 | `Enemies` | Gegner mit Basiswerten, SVG-Icon, Gefahrenbereich und Biomen |
 | `Events` + `EventOptions` | Orte (`poi`) und Begegnungen (`encounter`) mit Optionen, Proben und Effekten |
 | `Lore` | Infofragmente fürs Journal |
+| `_TableDocs`, `_ColumnDocs` | Beschriftungen, Hilfetexte und Eingabefeld-Typen für die Verwaltung |
 
 ### Effekte in `EventOptions` (Semikolon-getrennt)
 
@@ -98,8 +119,11 @@ EndlessSurvive/
     WorldGen.cs        unendliche Welt aus Seed + Koordinaten
     GameService.cs     Spielregeln: Proben, Ereignisse, Effekte, Kampf, Stufen
     SaveStore.cs       Spielstand in save.db
+    Admin/             Verwaltung: Tabellen-Editor, Inhaltsprüfung, Effekt-Katalog
   Components/
     Pages/             Titelbildschirm, Charaktererstellung, Spiel
+    Pages/Admin/       Seiten der Verwaltung
     Game/              Karte, Dialoge, Charakter, Inventar, Journal, Log
+    Admin/             Layout und Eingabefelder der Verwaltung
   wwwroot/             app.css, game.js (Tastatur)
 ```

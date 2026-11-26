@@ -1,0 +1,44 @@
+@inherits LayoutComponentBase
+@inject ContentAdmin Admin
+@inject NavigationManager Nav
+
+<div class="admin">
+    <aside class="admin-nav">
+        <a class="admin-brand" href="/admin"><span class="hud-logo">ES</span> Verwaltung</a>
+        <nav>
+            <a href="/admin" class="@Active("/admin", exact: true)">Übersicht</a>
+            <a href="/admin/check" class="@Active("/admin/check")">Inhaltsprüfung</a>
+            <a href="/admin/save" class="@Active("/admin/save")">Spielstand</a>
+            <a href="/admin/world" class="@Active("/admin/world")">Weltvorschau</a>
+            @foreach (var g in Admin.Tables().GroupBy(t => t.Group))
+            {
+                <div class="admin-nav-group">@g.Key</div>
+                @foreach (var t in g)
+                {
+                    <a href="/admin/t/@t.Name" class="@Active("/admin/t/" + t.Name)">@t.Label</a>
+                }
+            }
+        </nav>
+        <a class="btn btn-small admin-back" href="/">← Zum Spiel</a>
+    </aside>
+    <main class="admin-main">
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui">
+    Ein Fehler ist aufgetreten.
+    <a href="" class="reload">Neu laden</a>
+    <a class="dismiss">🗙</a>
+</div>
+
+@code {
+    private string Active(string path, bool exact = false)
+    {
+        var rel = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0].TrimEnd('/');
+        return (exact ? rel.Equals(path, StringComparison.OrdinalIgnoreCase)
+                      : rel.Equals(path, StringComparison.OrdinalIgnoreCase) || rel.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase)) ? "active" : "";
+    }
+
+    protected override void OnInitialized() => Nav.LocationChanged += (_, _) => InvokeAsync(StateHasChanged);
+}

@@ -1,0 +1,58 @@
+@page "/admin/check"
+@layout AdminLayout
+@inject ContentValidator Validator
+@inject ContentAdmin Admin
+
+<PageTitle>Inhaltsprüfung – Verwaltung</PageTitle>
+
+<header class="admin-head">
+    <div class="admin-head-row">
+        <h1>Inhaltsprüfung</h1>
+        <button class="btn" @onclick="Run">Erneut prüfen</button>
+    </div>
+    <p class="muted">Prüft Verweise, Effekte, SVG-Grafiken, Wertebereiche und die Schlüssel, die der Code direkt benutzt. Fehler stören das Spiel, Hinweise sind Empfehlungen.</p>
+</header>
+
+@if (_issues.Count == 0)
+{
+    <div class="admin-flash">Keine Probleme gefunden.</div>
+}
+@foreach (var sev in new[] { Severity.Error, Severity.Warning })
+{
+    var list = _issues.Where(i => i.Severity == sev).ToList();
+    if (list.Count == 0) continue;
+    <section class="admin-box">
+        <h2>@(sev == Severity.Error ? "Fehler" : "Hinweise") <span class="muted">@list.Count</span></h2>
+        <table class="admin-table">
+            <tbody>
+                @foreach (var i in list)
+                {
+                    <tr>
+                        <td><span class="issue-dot @(sev == Severity.Error ? "bad" : "warn")">!</span></td>
+                        <td>@(_labels.GetValueOrDefault(i.Table) ?? i.Table)</td>
+                        <td>
+                            @if (i.Key is not null)
+                            {
+                                <a href="/admin/t/@i.Table/find?key=@Uri.EscapeDataString(i.Key)">@i.Key</a>
+                            }
+                        </td>
+                        <td>@i.Message</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+}
+
+@code {
+    private IReadOnlyList<Issue> _issues = [];
+    private Dictionary<string, string> _labels = new();
+
+    protected override void OnInitialized()
+    {
+        _labels = Admin.Tables().ToDictionary(t => t.Name, t => t.Label);
+        Run();
+    }
+
+    private void Run() => _issues = Validator.Run();
+}

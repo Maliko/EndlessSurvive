@@ -37,6 +37,30 @@ public sealed class SaveStore
         return c;
     }
 
+    /// <summary>
+    /// Wird ausgeloest, wenn der Spielstand ausserhalb des Spiels geaendert wurde (Verwaltung).
+    /// Laufende Spiele laden ihn dann neu, statt ihn beim naechsten Zug zu ueberschreiben.
+    /// </summary>
+    public event Action? ExternallyChanged;
+
+    public void NotifyExternalChange() => ExternallyChanged?.Invoke();
+
+    /// <summary>Erkundung zuruecksetzen. resolvedOnly: nur erledigte Orte wieder oeffnen.</summary>
+    public void ResetTiles(bool resolvedOnly)
+    {
+        using var c = Open();
+        c.Execute(resolvedOnly ? "UPDATE Tiles SET State = State & ~2" : "DELETE FROM Tiles");
+    }
+
+    public void SetLore(IEnumerable<long> ids)
+    {
+        using var c = Open();
+        using var tx = c.BeginTransaction();
+        c.Execute("DELETE FROM FoundLore", transaction: tx);
+        c.Execute("INSERT INTO FoundLore (LoreId) VALUES (@Id)", ids.Select(id => new { Id = id }), tx);
+        tx.Commit();
+    }
+
     public bool Exists()
     {
         using var c = Open();
