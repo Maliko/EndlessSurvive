@@ -1,0 +1,24 @@
+@inject ContentStore Content
+@* Kleine Vorschau eines Stockwerks (Kacheln + Objekte). *@
+
+<svg class="floor-preview" viewBox="0 0 @(Floor.Width * 48) @(Floor.Height * 48)" style="max-width:@(MaxWidth)px">
+    <rect width="@(Floor.Width * 48)" height="@(Floor.Height * 48)" fill="#000" />
+    @for (int y = 0; y < Floor.Height; y++)
+    {
+        for (int x = 0; x < Floor.Width; x++)
+        {
+            var key = Floor.TileAt(x, y);
+            if (key == "void") continue;
+            <g transform="translate(@(x * 48) @(y * 48))">@((MarkupString)(Content.DungeonTiles.GetValueOrDefault(key)?.Svg ?? "<rect width='48' height='48' fill='#f0f'/>"))</g>
+        }
+    }
+    @foreach (var o in Floor.Objects)
+    {
+        <g transform="translate(@(o.X * 48) @(o.Y * 48))"><ObjectGlyph Obj="o" Editor="true" /></g>
+    }
+</svg>
+
+@code {
+    [Parameter, EditorRequired] public DungeonFloorDef Floor { get; set; } = default!;
+    [Parameter] public int MaxWidth { get; set; } = 360;
+}

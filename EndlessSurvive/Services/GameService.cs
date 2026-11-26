@@ -61,6 +61,12 @@ public sealed class GameService : IDisposable
         if (s is null) return false;
         State = s;
         World = new WorldGen(_c, s.Char.Seed);
+        if (s.InDungeon)
+        {
+            // Stockwerk existiert nicht mehr (in der Verwaltung geloescht): zurueck an die Oberflaeche
+            if (CurrentFloor is null) s.Char.DungeonKey = null;
+            else ExploreDungeon(DungeonSight);
+        }
         return true;
     }
 
@@ -309,6 +315,7 @@ public sealed class GameService : IDisposable
     public void Move(int dx, int dy)
     {
         if (!Loaded || Busy) return;
+        if (State!.InDungeon) { DungeonMove(dx, dy); return; }
         var s = State!;
         int nx = s.Char.X + dx, ny = s.Char.Y + dy;
         var tile = World!.Tile(nx, ny);
@@ -328,6 +335,8 @@ public sealed class GameService : IDisposable
 
         if (nx == 0 && ny == 0)
             AddLog(_c.Text("bunker"), "story");
+        else if (tile.Dungeon is not null)
+            OpenDungeonEntrance(tile);
         else if (tile.Poi is not null && !s.TileState(nx, ny).HasFlag(TileFlags.Resolved))
             OpenEvent(tile.Poi, tile, isPoi: true);
         else if (World.Distance(nx, ny) > _c.Int("SafeRadius", 2) && _dice.Chance(tile.Biome.EncounterChance))
@@ -336,27 +345,34 @@ public sealed class GameService : IDisposable
     }
 
     /// <summary>Einen Schritt in Richtung eines angeklickten Feldes.</summary>
+    /// <summary>Einen Schritt in Richtung eines angeklickten Feldes (Welt- oder Ruinenkoordinaten).</summary>
     public void StepToward(int tx, int ty)
     {
         if (!Loaded) return;
-        int dx = Math.Sign(tx - State!.Char.X), dy = Math.Sign(ty - State.Char.Y);
+        var s = State!;
+        bool dungeon = s.InDungeon;
+        int px = dungeon ? s.Char.FX : s.Char.X, py = dungeon ? s.Char.FY : s.Char.Y;
+        int dx = Math.Sign(tx - px), dy = Math.Sign(ty - py);
         if (dx == 0 && dy == 0)
         {
-            // Klick auf eigenes Feld: offenen Ort erneut ansehen
+            if (Busy || dungeon) return;
+            // Klick auf eigenes Feld: Ort oder Ruineneingang erneut ansehen
             var t = CurrentTile;
-            if (!Busy && t.Poi is not null && !State.TileState(t.X, t.Y).HasFlag(TileFlags.Resolved))
+            if (t.Dungeon is not null) { OpenDungeonEntrance(t); Persist(); }
+            else if (t.Poi is not null && !s.TileState(t.X, t.Y).HasFlag(TileFlags.Resolved))
                 OpenEvent(t.Poi, t, isPoi: true);
             return;
         }
-        int adx = Math.Abs(tx - State.Char.X), ady = Math.Abs(ty - State.Char.Y);
+        bool Can(int x, int y) => dungeon ? CanEnterDungeon(x, y) : CanEnter(x, y);
+        int adx = Math.Abs(tx - px), ady = Math.Abs(ty - py);
         // bevorzugt die laengere Achse, weicht bei Hindernis auf die andere aus
         if (adx >= ady)
         {
-            if (CanEnter(State.Char.X + dx, State.Char.Y) || dy == 0) Move(dx, 0); else Move(0, dy);
+            if (Can(px + dx, py) || dy == 0) Move(dx, 0); else Move(0, dy);
         }
         else
         {
-            if (CanEnter(State.Char.X, State.Char.Y + dy) || dx == 0) Move(0, dy); else Move(dx, 0);
+            if (Can(px, py + dy) || dx == 0) Move(0, dy); else Move(dx, 0);
         }
     }
 
@@ -374,6 +390,15 @@ public sealed class GameService : IDisposable
         var s = State!;
         var tile = CurrentTile;
         s.Char.Turn += 4;
+        if (s.InDungeon)
+        {
+            var r = Roll("healing", 0);
+            int h = Math.Min(MaxHp - s.Char.Hp, Math.Max(1, MaxHp * (r.Success ? 30 : 12) / 100));
+            s.Char.Hp += h;
+            AddLog($"Du rastest im Halbdunkel ({RollText(r)}): +{h} LP.", "good");
+            Persist();
+            return;
+        }
         if (tile.X == 0 && tile.Y == 0)
         {
             s.Char.Hp = MaxHp;
@@ -409,9 +434,9 @@ public sealed class GameService : IDisposable
         if (ev is not null) OpenEvent(ev, tile, isPoi: false);
     }
 
-    private void OpenEvent(EventDef def, TileInfo tile, bool isPoi)
+    private ActiveEvent OpenEvent(EventDef def, TileInfo tile, bool isPoi, long? dungeonObjectId = null)
     {
-        var ae = new ActiveEvent { Def = def, Tile = tile, IsPoi = isPoi };
+        var ae = new ActiveEvent { Def = def, Tile = tile, IsPoi = isPoi, DungeonObjectId = dungeonObjectId };
         foreach (var o in def.Options)
         {
             bool available = string.IsNullOrEmpty(o.RequiresItem) || Count(o.RequiresItem) > 0;
@@ -428,7 +453,8 @@ public sealed class GameService : IDisposable
             });
         }
         Event = ae;
-        AddLog($"{def.Title}", "event");
+        if (!string.IsNullOrEmpty(def.Title)) AddLog($"{def.Title}", "event");
+        return ae;
     }
 
     public void ChooseOption(OptionView option)
@@ -466,6 +492,8 @@ public sealed class GameService : IDisposable
         ev.Finished = true;
         if (ev.IsPoi && !_persist && State!.Char.Hp > 0)
             State.SetTile(ev.Tile.X, ev.Tile.Y, TileFlags.Resolved);
+        if (ev.DungeonObjectId is long objId && !_persist && State!.Char.Hp > 0)
+            State.MarkUsed(objId);
     }
 
     /// <returns>true, wenn ein Kampf gestartet wurde.</returns>
@@ -529,10 +557,19 @@ public sealed class GameService : IDisposable
             case "reveal":
             {
                 int r = ParseInt(p, 1, 4);
-                Explore(State!.Char.X, State.Char.Y, r);
+                if (State!.InDungeon) ExploreDungeon(r); else Explore(State.Char.X, State.Char.Y, r);
                 lines.Add($"Karte im Umkreis von {r} Feldern aufgedeckt");
                 break;
             }
+            case "story":
+                if (p.Length > 1) ShowStory(p[1]);
+                break;
+            case "dungeon":
+                if (p.Length > 1 && !State!.InDungeon) EnterDungeon(p[1]);
+                break;
+            case "exit":
+                if (State!.InDungeon) LeaveDungeon();
+                break;
             case "persist":
                 _persist = true;
                 break;
@@ -824,12 +861,223 @@ public sealed class GameService : IDisposable
         long lost = s.Char.Xp * _c.Int("DeathXpLossPercent", 25) / 100;
         s.Char.Xp -= lost;
         s.Char.X = 0; s.Char.Y = 0;
+        s.Char.DungeonKey = null;
         s.Char.Hp = Math.Max(1, MaxHp / 2);
         _effects.Clear();
         Event = null; Combat = null; Trade = null;
         Explore(0, 0, SightRadius);
         AddLog($"Du bist gestorben und im Bunker wieder zu dir gekommen. −{lost} EP.", "bad");
         _notices.Enqueue(new Notice { Title = "Niedergestreckt", Text = _c.Text("death") + (lost > 0 ? $"\n\nDu verlierst {lost} EP." : ""), Kind = "death" });
+    }
+
+    // =================================================================
+    //  Ruinen
+    // =================================================================
+
+    public DungeonDef? CurrentDungeon => State?.Char.DungeonKey is { } k ? _c.Dungeons.GetValueOrDefault(k) : null;
+
+    public DungeonFloorDef? CurrentFloor => State?.InDungeon == true ? _c.Floors.GetValueOrDefault(State.Char.FloorId) : null;
+
+    public DungeonTileDef? TileDef(string key) => _c.DungeonTiles.GetValueOrDefault(key);
+
+    /// <summary>Gefahrenstufe in der Ruine: Gefahr am Eingang + Zuschlag des Stockwerks.</summary>
+    public int DungeonDanger => State is null || World is null ? 0
+        : World.Tile(State.Char.DungeonWX, State.Char.DungeonWY).Danger + (CurrentFloor?.DangerOffset ?? 0);
+
+    /// <summary>Kontext fuer Effekte und Proben in der Ruine (Biom des Eingangs, Gefahr der Ruine).</summary>
+    private TileInfo DungeonContext()
+    {
+        var world = World!.Tile(State!.Char.DungeonWX, State.Char.DungeonWY);
+        return new TileInfo(world.X, world.Y, world.Biome, DungeonDanger, null, world.Dungeon);
+    }
+
+    public bool CanEnterDungeon(int x, int y)
+    {
+        var f = CurrentFloor;
+        if (f is null || x < 0 || y < 0 || x >= f.Width || y >= f.Height) return false;
+        var o = f.ObjectAt(x, y);
+        if (o is not null && o.Blocks && !State!.IsUsed(o.Id)) return true; // Interaktion durch Anlaufen
+        return TileDef(f.TileAt(x, y))?.Passable == true;
+    }
+
+    private static EventDef Synth(string title, string text, params EventOptionDef[] options)
+    {
+        var d = new EventDef { Key = "_dungeon", Title = title, Text = text, Kind = "dungeon" };
+        int i = 1;
+        foreach (var o in options) { o.SortOrder = i++; d.Options.Add(o); }
+        return d;
+    }
+
+    private static EventOptionDef Opt(string label, string? effects, string? text = null) =>
+        new() { Label = label, SuccessEffects = effects, SuccessText = text ?? "" };
+
+    private void OpenDungeonEntrance(TileInfo tile)
+    {
+        var d = tile.Dungeon!;
+        var ev = Synth(d.Name, d.Description,
+            Opt("Betreten", $"dungeon:{d.Key};persist", "Du steigst hinab."),
+            Opt("Weitergehen", "persist", "Ein andermal."));
+        OpenEvent(ev, tile, isPoi: false);
+    }
+
+    private void EnterDungeon(string key)
+    {
+        var s = State!;
+        if (!_c.Dungeons.TryGetValue(key, out var d) || d.Entrance is not { } ent)
+        {
+            AddLog($"Ruine „{key}“ hat keinen Eingang.", "warn");
+            return;
+        }
+        s.Char.DungeonKey = d.Key;
+        s.Char.DungeonWX = s.Char.X;
+        s.Char.DungeonWY = s.Char.Y;
+        s.Char.FloorId = ent.FloorId;
+        s.Char.FX = ent.X;
+        s.Char.FY = ent.Y;
+        ExploreDungeon(DungeonSight);
+        AddLog($"Du betrittst {d.Name} – {CurrentFloor?.Name}.", "story");
+    }
+
+    private void LeaveDungeon()
+    {
+        var s = State!;
+        var name = CurrentDungeon?.Name ?? "die Ruine";
+        s.Char.DungeonKey = null;
+        Explore(s.Char.X, s.Char.Y, SightRadius);
+        AddLog($"Du verlässt {name}.", "story");
+    }
+
+    private int DungeonSight => _c.Int("DungeonSightRadius", 3) + (SkillValue("perception") >= 60 ? 1 : 0);
+
+    private void ExploreDungeon(int r)
+    {
+        var s = State!;
+        var f = CurrentFloor;
+        if (f is null) return;
+        for (int y = Math.Max(0, s.Char.FY - r); y <= Math.Min(f.Height - 1, s.Char.FY + r); y++)
+        for (int x = Math.Max(0, s.Char.FX - r); x <= Math.Min(f.Width - 1, s.Char.FX + r); x++)
+            if ((x - s.Char.FX) * (x - s.Char.FX) + (y - s.Char.FY) * (y - s.Char.FY) <= r * r + r)
+                s.ExploreInDungeon(x, y);
+    }
+
+    private void DungeonMove(int dx, int dy)
+    {
+        var s = State!;
+        var f = CurrentFloor;
+        if (f is null) { s.Char.DungeonKey = null; Persist(); return; } // Stockwerk geloescht: zurueck an die Oberflaeche
+        int nx = s.Char.FX + dx, ny = s.Char.FY + dy;
+        if (nx < 0 || ny < 0 || nx >= f.Width || ny >= f.Height) return;
+
+        var obj = f.ObjectAt(nx, ny);
+        bool used = obj is not null && s.IsUsed(obj.Id);
+        if (obj is not null && obj.Blocks && !used)
+        {
+            InteractDungeonObject(obj); // Anlaufen loest aus, Spieler bleibt stehen
+            Persist();
+            return;
+        }
+        if (TileDef(f.TileAt(nx, ny))?.Passable != true)
+        {
+            Persist();
+            return;
+        }
+        s.Char.FX = nx; s.Char.FY = ny; s.Char.Turn++;
+        ExploreDungeon(DungeonSight);
+        if (obj is not null)
+        {
+            switch (obj.Kind)
+            {
+                case "exit": InteractDungeonObject(obj); break;
+                case "transition": Transition(obj); break;
+                case "trigger" when !used: RunTrigger(obj); break;
+            }
+        }
+        Persist();
+    }
+
+    private void InteractDungeonObject(DungeonObjectDef o)
+    {
+        var ctx = DungeonContext();
+        switch (o.Kind)
+        {
+            case "container" or "door":
+            {
+                bool door = o.Kind == "door";
+                var title = o.Label ?? (door ? "Tür" : "Behälter");
+                var open = new EventOptionDef
+                {
+                    Label = door ? (o.SkillKey is null ? "Öffnen" : "Aufschließen") : (o.SkillKey is null ? "Durchsuchen" : "Öffnen"),
+                    SkillKey = o.SkillKey,
+                    Difficulty = o.Difficulty,
+                    DangerScaling = true,
+                    SuccessText = door ? "Die Tür schwingt auf." : string.IsNullOrWhiteSpace(o.Effects) ? "Leer." : "Du siehst nach, was drin ist.",
+                    SuccessEffects = o.Effects,
+                    FailText = door ? "Die Tür bleibt zu." : "Es will nicht aufgehen.",
+                    FailEffects = (string.IsNullOrWhiteSpace(o.FailEffects) ? "" : o.FailEffects + ";") + "persist",
+                };
+                OpenEvent(Synth(title, o.Description ?? "", open, Opt("In Ruhe lassen", "persist", "Du lässt es, wie es ist.")), ctx, false, o.Id);
+                break;
+            }
+            case "enemy":
+            {
+                var e = o.EnemyKey is not null ? _c.Enemies.GetValueOrDefault(o.EnemyKey) : null;
+                var effects = $"combat:{e?.Key ?? "*"}" + (string.IsNullOrWhiteSpace(o.Effects) ? "" : ";" + o.Effects);
+                OpenEvent(Synth(o.Label ?? e?.Name ?? "Gegner", o.Description ?? e?.Description ?? "",
+                    Opt("Angreifen", effects, "Du greifst an!"),
+                    Opt("Zurückweichen", "persist", "Du ziehst dich zurück.")), ctx, false, o.Id);
+                break;
+            }
+            case "event":
+                if (o.EventKey is not null && _c.Events.TryGetValue(o.EventKey, out var ev))
+                    OpenEvent(ev, ctx, false, o.Id);
+                else
+                    AddLog($"Ereignis „{o.EventKey}“ fehlt.", "warn");
+                break;
+            case "exit":
+                OpenEvent(Synth(o.Label ?? "Ausgang", o.Description ?? "Hier geht es zurück an die Oberfläche.",
+                    Opt("Ruine verlassen", "exit;persist", "Du kletterst hinaus ins Freie."),
+                    Opt("Bleiben", "persist", "Noch nicht.")), ctx, false, o.Id);
+                break;
+        }
+    }
+
+    private void Transition(DungeonObjectDef o)
+    {
+        var s = State!;
+        if (o.TargetFloorId is not long fid || !_c.Floors.TryGetValue(fid, out var target))
+        {
+            AddLog($"{o.Label ?? "Übergang"}: führt nirgendwohin.", "warn");
+            return;
+        }
+        s.Char.DungeonKey = target.DungeonKey;
+        s.Char.FloorId = target.Id;
+        s.Char.FX = Math.Clamp(o.TargetX ?? 0, 0, target.Width - 1);
+        s.Char.FY = Math.Clamp(o.TargetY ?? 0, 0, target.Height - 1);
+        ExploreDungeon(DungeonSight);
+        AddLog($"{o.Label ?? "Übergang"} → {target.Name}", "story");
+    }
+
+    private void RunTrigger(DungeonObjectDef o)
+    {
+        if (string.IsNullOrWhiteSpace(o.Effects)) { State!.MarkUsed(o.Id); return; }
+        var ev = OpenEvent(Synth(o.Label ?? "", o.Description ?? ""), DungeonContext(), false, o.Id);
+        ev.ResultText = "";
+        _effects.Clear();
+        _persist = false;
+        foreach (var e in o.Effects.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            _effects.Enqueue(e);
+        RunEffects();
+        // Reiner Story-Ausloeser ohne eigenen Text: kein leerer Dialog
+        if (ev.Finished && ev.ResultLines.Count == 0 && string.IsNullOrEmpty(o.Label) && string.IsNullOrEmpty(o.Description) && Event == ev)
+            Event = null;
+    }
+
+    private void ShowStory(string key)
+    {
+        if (!_c.Stories.TryGetValue(key, out var st)) return;
+        if (State!.FoundStories.Add(key)) State.NewStories.Add(key);
+        _notices.Enqueue(new Notice { Title = st.Title, Text = st.Text, Kind = "story" });
+        AddLog($"Aufzeichnung: {st.Title}", "story");
     }
 
     // =================================================================

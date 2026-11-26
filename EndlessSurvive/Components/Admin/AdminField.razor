@@ -15,6 +15,10 @@
     {
         <input class="af-input" value="@Value" disabled />
     }
+    else if (ed == "mapdata")
+    {
+        <div class="af-msg">Kartendaten (@((Value ?? "").Split('\n').Length) Zeilen) – bitte im <a href="/admin/ruins">Ruinen-Editor</a> bearbeiten.</div>
+    }
     else if (ed == "multiline")
     {
         <textarea class="af-input" rows="3" value="@Value" @onchange="Set"></textarea>
@@ -105,7 +109,7 @@
     [Parameter] public string? PreviewBackground { get; set; }
     [Parameter] public string? PreviewColor { get; set; }
 
-    private bool Wide => Column.Editor is "multiline" or "effects" or "biomes" or "cats" || Column.Editor.StartsWith("svg:");
+    private bool Wide => Column.Editor is "multiline" or "mapdata" or "effects" or "biomes" or "cats" || Column.Editor.StartsWith("svg:");
 
     private string ColorForPicker
     {

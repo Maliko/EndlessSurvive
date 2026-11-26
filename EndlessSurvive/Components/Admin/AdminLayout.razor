@@ -10,6 +10,7 @@
             <a href="/admin/check" class="@Active("/admin/check")">Inhaltsprüfung</a>
             <a href="/admin/save" class="@Active("/admin/save")">Spielstand</a>
             <a href="/admin/world" class="@Active("/admin/world")">Weltvorschau</a>
+            <a href="/admin/ruins" class="@Active("/admin/ruins")">Ruinen-Editor</a>
             @foreach (var g in Admin.Tables().GroupBy(t => t.Group))
             {
                 <div class="admin-nav-group">@g.Key</div>

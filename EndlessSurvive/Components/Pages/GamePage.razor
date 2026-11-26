@@ -22,15 +22,30 @@
                 <Bar Label="EP" Value="s.Char.Xp" Max="Game.XpForNext(s.Char.Level)" Kind="xp" />
             </div>
             <div class="hud-loc">
-                <span class="biome-chip" style="--chip:@tile.Biome.Color">@tile.Biome.Name</span>
-                <span class="danger d@(Math.Min(tile.Danger, 9))" title="Gefahrenstufe">⚠ @tile.Danger</span>
-                <span class="coords">@s.Char.X, @(-s.Char.Y)</span>
+                @if (s.InDungeon)
+                {
+                    <span class="biome-chip" style="--chip:#26222a">@Game.CurrentDungeon?.Name · @Game.CurrentFloor?.Name</span>
+                    <span class="danger d@(Math.Min(Game.DungeonDanger, 9))" title="Gefahrenstufe">⚠ @Game.DungeonDanger</span>
+                }
+                else
+                {
+                    <span class="biome-chip" style="--chip:@tile.Biome.Color">@tile.Biome.Name</span>
+                    <span class="danger d@(Math.Min(tile.Danger, 9))" title="Gefahrenstufe">⚠ @tile.Danger</span>
+                    <span class="coords">@s.Char.X, @(-s.Char.Y)</span>
+                }
             </div>
         </header>
 
         <main class="game-main">
             <section class="map-col">
-                <MapView Cols="_cols" Rows="_rows" />
+                @if (s.InDungeon && Game.CurrentFloor is not null)
+                {
+                    <DungeonView Cols="_cols" Rows="_rows" />
+                }
+                else
+                {
+                    <MapView Cols="_cols" Rows="_rows" />
+                }
                 <div class="below-map">
                     <div class="dpad">
                         <button class="btn dpad-up" title="Norden (W / ↑)" @onclick="() => Game.Move(0, -1)">▲</button>
@@ -40,17 +55,32 @@
                         <button class="btn dpad-down" title="Sueden (S / ↓)" @onclick="() => Game.Move(0, 1)">▼</button>
                     </div>
                     <div class="tile-info">
-                        <strong>@tile.Biome.Name</strong>
-                        <p>@tile.Biome.Description</p>
-                        <div class="tile-actions">
-                            <button class="btn" @onclick="Game.Rest" title="Rasten (R)">
-                                @(tile.X == 0 && tile.Y == 0 ? "In der Kapsel schlafen" : "Rasten")
-                            </button>
-                            @if (tile.Poi is not null && !s.TileState(tile.X, tile.Y).HasFlag(TileFlags.Resolved))
-                            {
-                                <button class="btn btn-primary" @onclick="() => Game.StepToward(tile.X, tile.Y)">@tile.Poi.Title <kbd>E</kbd></button>
-                            }
-                        </div>
+                        @if (s.InDungeon)
+                        {
+                            <strong>@Game.CurrentDungeon?.Name</strong>
+                            <p>@Game.CurrentFloor?.Name · Kisten, Türen und Gegner durch Anlaufen benutzen.</p>
+                            <div class="tile-actions">
+                                <button class="btn" @onclick="Game.Rest" title="Rasten (R)">Rasten</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <strong>@tile.Biome.Name</strong>
+                            <p>@tile.Biome.Description</p>
+                            <div class="tile-actions">
+                                <button class="btn" @onclick="Game.Rest" title="Rasten (R)">
+                                    @(tile.X == 0 && tile.Y == 0 ? "In der Kapsel schlafen" : "Rasten")
+                                </button>
+                                @if (tile.Dungeon is not null)
+                                {
+                                    <button class="btn btn-primary" @onclick="() => Game.StepToward(tile.X, tile.Y)">@tile.Dungeon.Name <kbd>E</kbd></button>
+                                }
+                                else if (tile.Poi is not null && !s.TileState(tile.X, tile.Y).HasFlag(TileFlags.Resolved))
+                                {
+                                    <button class="btn btn-primary" @onclick="() => Game.StepToward(tile.X, tile.Y)">@tile.Poi.Title <kbd>E</kbd></button>
+                                }
+                            </div>
+                        }
                         <small class="keys">WASD / Pfeile / Klick: Bewegen · R: Rasten · E: Ort untersuchen · 1–9: Optionen · Enter: Weiter · C/I/J: Reiter</small>
                     </div>
                     <LogPanel />
@@ -187,7 +217,7 @@ else
                 case "c": _tab = 0; break;
                 case "i": _tab = 1; break;
                 case "j": _tab = 2; break;
-                case "e" or "Enter": var t = Game.CurrentTile; Game.StepToward(t.X, t.Y); break;
+                case "e" or "Enter" when !Game.State!.InDungeon: var t = Game.CurrentTile; Game.StepToward(t.X, t.Y); break;
                 default: return;
             }
         }

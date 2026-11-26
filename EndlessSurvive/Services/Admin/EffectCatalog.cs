@@ -21,7 +21,10 @@ public static class EffectCatalog
         new("trade", "trade:KEY · trade:*", "Tauschhandel mit Händler KEY"),
         new("lore", "lore", "zufälliges neues Infofragment"),
         new("reveal", "reveal:R", "Karte im Radius R aufdecken"),
-        new("persist", "persist", "Ort bleibt auf der Karte"),
+        new("persist", "persist", "Ort bzw. Objekt bleibt bestehen"),
+        new("story", "story:KEY", "Story-Text anzeigen und ins Journal aufnehmen (Storyboard)"),
+        new("dungeon", "dungeon:KEY", "Ruine KEY betreten (von der Oberwelt aus)"),
+        new("exit", "exit", "Ruine verlassen, zurück an die Oberfläche"),
     ];
 
     public static readonly string[] Categories = ["weapon", "armor", "consumable", "ammo"];
@@ -70,7 +73,13 @@ public static class EffectCatalog
                 case "trade":
                     if (Arg(1) is not { } tr || (tr != "*" && !c.Traders.ContainsKey(tr))) yield return $"„{raw}“: Händler „{Arg(1)}“ existiert nicht";
                     break;
-                case "lore" or "persist":
+                case "story":
+                    if (Arg(1) is not { } st || !c.Stories.ContainsKey(st)) yield return $"„{raw}“: Story „{Arg(1)}“ existiert nicht";
+                    break;
+                case "dungeon":
+                    if (Arg(1) is not { } dg || !c.Dungeons.ContainsKey(dg)) yield return $"„{raw}“: Ruine „{Arg(1)}“ existiert nicht";
+                    break;
+                case "lore" or "persist" or "exit":
                     break;
                 default:
                     yield return $"„{raw}“: unbekannter Effekt „{name}“";

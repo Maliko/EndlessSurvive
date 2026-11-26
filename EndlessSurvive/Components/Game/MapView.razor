@@ -41,7 +41,14 @@
                         <g opacity=".9">@((MarkupString)t.Biome.Glyph)</g>
                     }
                     <rect class="tile-grid" width="@T" height="@T" />
-                    @if (t.Poi is not null && !state.HasFlag(TileFlags.Resolved))
+                    @if (t.Dungeon is not null)
+                    {
+                        <g class="poi dungeon-entry" style="--dc:@t.Dungeon.Color">
+                            <rect x="10" y="10" width="28" height="28" rx="5" />
+                            <text x="24" y="24">@t.Dungeon.Marker</text>
+                        </g>
+                    }
+                    else if (t.Poi is not null && !state.HasFlag(TileFlags.Resolved))
                     {
                         <g class="poi">
                             <circle cx="24" cy="24" r="13" />

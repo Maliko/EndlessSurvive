@@ -1,0 +1,52 @@
+@inherits GameComponent
+
+@{
+    var s = Game.State!;
+    var f = Game.CurrentFloor!;
+    int px = s.Char.FX, py = s.Char.FY;
+    int sight = Game.Content.Int("DungeonSightRadius", 3);
+}
+<div class="map-wrap dungeon-wrap">
+    <svg class="map" viewBox="0 0 @(Cols * T) @(Rows * T)" role="img" aria-label="Ruine">
+        <rect width="@(Cols * T)" height="@(Rows * T)" fill="#000" />
+        @for (int vy = 0; vy < Rows; vy++)
+        {
+            for (int vx = 0; vx < Cols; vx++)
+            {
+                int fx = px + vx - Cols / 2, fy = py + vy - Rows / 2;
+                if (fx < 0 || fy < 0 || fx >= f.Width || fy >= f.Height || !s.IsExploredInDungeon(fx, fy)) continue;
+                int sx = vx * T, sy = vy * T;
+                var tile = Game.TileDef(f.TileAt(fx, fy));
+                var obj = f.ObjectAt(fx, fy);
+                int dx = fx - px, dy = fy - py;
+                bool visible = dx * dx + dy * dy <= sight * sight + sight;
+                bool adjacent = Math.Abs(dx) + Math.Abs(dy) == 1;
+                bool canStep = adjacent && Game.CanEnterDungeon(fx, fy);
+                <g class="tile @(canStep ? "adj" : "")" transform="translate(@sx @sy)" @onclick="() => Game.StepToward(fx, fy)">
+                    @if (tile is not null) { @((MarkupString)tile.Svg) } else { <rect width="@T" height="@T" fill="#050505" /> }
+                    @if (obj is not null) { <ObjectGlyph Obj="obj" Used="s.IsUsed(obj.Id)" /> }
+                    @if (!visible) { <rect width="@T" height="@T" fill="#000" opacity=".5" pointer-events="none" /> }
+                </g>
+            }
+        }
+        <rect width="@(Cols * T)" height="@(Rows * T)" fill="url(#dvignette)" pointer-events="none" />
+        <defs>
+            <radialGradient id="dvignette" cx=".5" cy=".5" r=".7">
+                <stop offset=".45" stop-color="#000" stop-opacity="0" />
+                <stop offset="1" stop-color="#000" stop-opacity=".8" />
+            </radialGradient>
+        </defs>
+        <g class="player" transform="translate(@((Cols / 2) * T + T / 2) @((Rows / 2) * T + T / 2))" pointer-events="none">
+            <circle class="player-pulse" r="18" />
+            <circle r="10" fill="#f2b43a" stroke="#1a1208" stroke-width="3" />
+            <circle r="3.5" fill="#1a1208" />
+        </g>
+    </svg>
+    <div class="dungeon-badge">@Game.CurrentDungeon?.Name · @f.Name</div>
+</div>
+
+@code {
+    private const int T = 48;
+    [Parameter] public int Cols { get; set; } = 19;
+    [Parameter] public int Rows { get; set; } = 11;
+}

@@ -1,0 +1,745 @@
+@page "/admin/ruins/{Key}/floor/{Id:long}"
+@layout AdminLayout
+@inject ContentAdmin Admin
+@inject ContentStore Content
+@inject ContentValidator Validator
+@inject SaveStore Saves
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>@(_floorName ?? "Stockwerk") – Ruinen-Editor</PageTitle>
+
+<NavigationLock ConfirmExternalNavigation="@_dirty" OnBeforeInternalNavigation="OnBeforeNavigation" />
+
+@if (Floor is null || _d is null)
+{
+    <p>Stockwerk nicht gefunden. <a href="/admin/ruins/@Key">Zur Ruine</a></p>
+    return;
+}
+
+<header class="admin-head">
+    <div class="admin-crumbs"><a href="/admin/ruins">Ruinen</a> / <a href="/admin/ruins/@Key">@_d.Name</a> /</div>
+    <div class="admin-head-row">
+        <h1>@Floor.Name <span class="muted">@_w × @_h</span></h1>
+        <div class="admin-actions">
+            <select class="af-input fe-floor-switch" value="@Id" @onchange="SwitchFloor">
+                @foreach (var f in _d.Floors.OrderBy(f => f.SortOrder)) { <option value="@f.Id">@f.SortOrder. @f.Name</option> }
+            </select>
+            <button class="btn" disabled="@(_undo.Count == 0)" @onclick="Undo" title="Letzten Malvorgang rückgängig machen">↶ Rückgängig</button>
+            <button class="btn btn-primary" disabled="@(!_dirty)" @onclick="SaveTiles">@(_dirty ? "Karte speichern ●" : "Gespeichert")</button>
+        </div>
+    </div>
+</header>
+
+@if (_msg is not null)
+{
+    <div class="admin-flash @(_bad ? "bad" : "")">@_msg
+        @if (_testLink) { <a class="btn btn-small btn-primary" href="/game" target="_blank">Spiel öffnen ↗</a> }
+    </div>
+}
+@if (_pickFor is long pf)
+{
+    <div class="fe-banner">Klicke auf das <strong>Zielfeld</strong> für den Übergang „@(ObjectById(pf)?.Label ?? "Übergang")“. <button class="btn btn-small" @onclick="CancelModes">Abbrechen</button></div>
+}
+@if (_placeEffect is not null)
+{
+    <div class="fe-banner">Klicke auf ein Feld, um <code>@_placeEffect</code> zu verknüpfen. Auf einem Objekt wird der Effekt ergänzt, sonst entsteht ein Auslöser. <button class="btn btn-small" @onclick="CancelModes">Abbrechen</button></div>
+}
+@if (_moveObj is long mo)
+{
+    <div class="fe-banner">Klicke auf das neue Feld für „@ObjTitle(ObjectById(mo))“. <button class="btn btn-small" @onclick="CancelModes">Abbrechen</button></div>
+}
+
+<div class="fe">
+    @* ---------------- Werkzeuge ---------------- *@
+    <aside class="fe-tools">
+        <div class="fe-group">Werkzeug</div>
+        <div class="fe-toolrow">
+            @foreach (var (key, label, tip) in Tools)
+            {
+                <button class="fe-tool @(_tool == key ? "active" : "")" title="@tip" @onclick="() => SetTool(key)">@label</button>
+            }
+        </div>
+
+        <div class="fe-group">Gelände</div>
+        <button class="fe-auto @(_brush == AutoCorridor && PaintTool ? "active" : "")" title="Gänge malen: Ecken, Abzweige und Sackgassen werden automatisch gewählt"
+                @onclick="() => ChooseBrush(AutoCorridor)">
+            <svg viewBox="0 0 48 48">@((MarkupString)(Content.DungeonTiles.GetValueOrDefault("corridor_nesw")?.Svg ?? ""))</svg> Gang (automatisch)
+        </button>
+        <div class="fe-palette">
+            @foreach (var t in Content.DungeonTiles.Values.Where(t => t.Layer == "terrain"))
+            {
+                <button class="fe-swatch @SwatchClass(t)" title="@SwatchTitle(t)" @onclick="() => ChooseBrush(t.Key)">
+                    <svg viewBox="0 0 48 48">@((MarkupString)t.Svg)</svg>
+                    @if (!t.Passable) { <span class="fe-block">⨯</span> }
+                </button>
+            }
+        </div>
+        <small class="muted">Pinsel: @(_brush == AutoCorridor ? "Gang (automatisch)" : Content.DungeonTiles.GetValueOrDefault(_brush)?.Name ?? _brush)</small>
+
+        <div class="fe-group">Objekt setzen</div>
+        <div class="fe-kinds">
+            @foreach (var (k, n, _) in DungeonKinds.All)
+            {
+                <button class="fe-kind @KindClass(k)" @onclick="() => ChooseKind(k)">@n</button>
+            }
+        </div>
+        <label class="af-check"><input type="checkbox" @bind="_showGrid" /> Raster</label>
+        <label class="fe-zoom">Zoom
+            <input type="range" min="16" max="56" step="4" @bind="_zoom" @bind:event="oninput" />
+        </label>
+    </aside>
+
+    @* ---------------- Zeichenfläche ---------------- *@
+    <div class="fe-canvas-wrap">
+        <div class="fe-status mono">
+            @if (_hover is var (hx, hy))
+            {
+                <span>@hx, @hy · @(Content.DungeonTiles.GetValueOrDefault(_grid[hy][hx])?.Name ?? _grid[hy][hx])
+                    @if (Floor.ObjectAt(hx, hy) is { } ho) { <text> · @DungeonKinds.Name(ho.Kind): @ObjTitle(ho)</text> }</span>
+            }
+            else { <span class="muted">Linke Maustaste gedrückt halten zum Malen</span> }
+        </div>
+        <div class="fe-canvas" @onmouseleave="Up">
+            <svg width="@(_w * _zoom)" height="@(_h * _zoom)" viewBox="0 0 @(_w * T) @(_h * T)" @onmouseup="Up" class="@(PaintTool ? "painting" : "")">
+                <rect width="@(_w * T)" height="@(_h * T)" fill="#000" />
+                @for (int y = 0; y < _h; y++)
+                {
+                    for (int x = 0; x < _w; x++)
+                    {
+                        var key = _grid[y][x];
+                        if (key == "void") continue;
+                        <g transform="translate(@(x * T) @(y * T))">@((MarkupString)(Content.DungeonTiles.GetValueOrDefault(key)?.Svg ?? "<rect width='48' height='48' fill='#f0f'/>"))</g>
+                    }
+                }
+                @foreach (var fo in Floor.Objects)
+                {
+                    <g transform="translate(@(fo.X * T) @(fo.Y * T))"><ObjectGlyph Obj="fo" Editor="true" /></g>
+                    @if (fo.Kind == "transition" && fo.TargetFloorId == Floor.Id && fo.TargetX is int tx2 && fo.TargetY is int ty2)
+                    {
+                        <path d="M@(fo.X * T + 24) @(fo.Y * T + 24) L@(tx2 * T + 24) @(ty2 * T + 24)" class="fe-link" />
+                    }
+                }
+                @* Ankunftspunkte von Uebergaengen anderer Stockwerke *@
+                @foreach (var inc in Incoming)
+                {
+                    <circle cx="@(inc.TargetX!.Value * T + 24)" cy="@(inc.TargetY!.Value * T + 24)" r="7" class="fe-arrival"><title>Ankunft von „@ObjTitle(inc)“</title></circle>
+                }
+                @if (_showGrid)
+                {
+                    <path d="@GridPath" class="fe-gridlines" />
+                }
+                @if (_rectStart is var (rx1, ry1) && _rectEnd is var (rx2, ry2))
+                {
+                    <rect x="@(Math.Min(rx1, rx2) * T)" y="@(Math.Min(ry1, ry2) * T)" width="@((Math.Abs(rx2 - rx1) + 1) * T)" height="@((Math.Abs(ry2 - ry1) + 1) * T)" class="fe-rect" />
+                }
+                @if (ObjectById(_selected) is { } sel)
+                {
+                    <rect x="@(sel.X * T + 1)" y="@(sel.Y * T + 1)" width="@(T - 2)" height="@(T - 2)" class="fe-selected" />
+                }
+                @if (_hover is var (hx2, hy2))
+                {
+                    <rect x="@(hx2 * T)" y="@(hy2 * T)" width="@T" height="@T" class="fe-hover" />
+                }
+                @* Trefferflaechen fuer die Maus *@
+                @for (int y = 0; y < _h; y++)
+                {
+                    for (int x = 0; x < _w; x++)
+                    {
+                        int cx = x, cy = y;
+                        <rect x="@(x * T)" y="@(y * T)" width="@T" height="@T" fill="transparent"
+                              @onmousedown="() => Down(cx, cy)" @onmousedown:preventDefault @onmouseenter="() => Enter(cx, cy)" />
+                    }
+                }
+            </svg>
+        </div>
+    </div>
+
+    @* ---------------- Eigenschaften ---------------- *@
+    <aside class="fe-side">
+        @if (ObjectById(_selected) is { } o)
+        {
+            <section class="admin-box">
+                <div class="admin-head-row">
+                    <h2>@DungeonKinds.Name(o.Kind) <span class="muted">@o.X, @o.Y</span></h2>
+                    <button class="btn btn-small btn-ghost" @onclick="() => { _selected = null; }">✕</button>
+                </div>
+                <label class="af">
+                    <span class="af-name">Art</span>
+                    <select class="af-input" value="@_objForm.GetValueOrDefault("Kind")" @onchange='e => _objForm["Kind"] = e.Value?.ToString()'>
+                        @foreach (var (k, n, _) in DungeonKinds.All) { <option value="@k">@n</option> }
+                    </select>
+                </label>
+                <p class="muted small">@KindHelp(_objForm.GetValueOrDefault("Kind") ?? o.Kind)</p>
+                @foreach (var col in KindColumns(_objForm.GetValueOrDefault("Kind") ?? o.Kind))
+                {
+                    if (col == "Icon")
+                    {
+                        <label class="af">
+                            <span class="af-name">Symbol</span>
+                            <select class="af-input" value="@(_objForm.GetValueOrDefault("Icon") ?? "")" @onchange='e => _objForm["Icon"] = e.Value?.ToString()'>
+                                <option value="">(Standard für die Art)</option>
+                                @foreach (var t in Content.DungeonTiles.Values.Where(t => t.Layer == "object")) { <option value="@t.Key">@t.Name</option> }
+                            </select>
+                        </label>
+                    }
+                    else if (_objTable?.Column(col) is { } ci)
+                    {
+                        <AdminField Column="ci" Value="@_objForm.GetValueOrDefault(col)" ValueChanged="v => _objForm[col] = v" Error="@_objErrors.GetValueOrDefault(col)" />
+                    }
+                }
+                @if (KindColumns(_objForm.GetValueOrDefault("Kind") ?? o.Kind).Contains("Effects"))
+                {
+                    <label class="af">
+                        <span class="af-name">Story verknüpfen</span>
+                        <select class="af-input" value="" @onchange="AppendStory">
+                            <option value="">– Story wählen –</option>
+                            @foreach (var st in Content.Stories.Values.Where(s => s.DungeonKey == Key || s.DungeonKey is null)) { <option value="@st.Key">@st.Title</option> }
+                        </select>
+                    </label>
+                }
+                <div class="admin-actions">
+                    <button class="btn btn-primary btn-small" @onclick="SaveObject">Übernehmen</button>
+                    <button class="btn btn-small" @onclick="() => { _moveObj = o.Id; _msg = null; }">Verschieben</button>
+                    @if (o.Kind == "transition")
+                    {
+                        <button class="btn btn-small" @onclick="() => PickTarget(o)">Ziel auf Karte wählen</button>
+                        <button class="btn btn-small" @onclick="() => CreateReturn(o)">Rückweg anlegen</button>
+                        @if (o.TargetFloorId is long tfid && tfid != Floor.Id)
+                        {
+                            <a class="btn btn-small" href="/admin/ruins/@Key/floor/@tfid">Zum Ziel →</a>
+                        }
+                    }
+                    <button class="btn btn-small btn-danger" @onclick="DeleteObject">Löschen</button>
+                </div>
+            </section>
+        }
+        else
+        {
+            <section class="admin-box">
+                <h2>Stockwerk</h2>
+                <div class="admin-form compact one">
+                    <label class="af"><span class="af-name">Name</span><input class="af-input" @bind="_floorName" /></label>
+                    <label class="af"><span class="af-name">Reihenfolge</span><input class="af-input num" type="number" @bind="_floorSort" /></label>
+                    <label class="af"><span class="af-name">Gefahr + <small>zusätzlich zur Gefahr am Eingang</small></span><input class="af-input num" type="number" min="0" @bind="_floorDanger" /></label>
+                </div>
+                <button class="btn btn-small btn-primary" @onclick="SaveFloorSettings">Übernehmen</button>
+            </section>
+            <section class="admin-box">
+                <h2>Größe ändern</h2>
+                <div class="admin-form compact">
+                    <label class="af"><span class="af-name">Breite</span><input class="af-input num" type="number" min="3" max="120" @bind="_newW" /></label>
+                    <label class="af"><span class="af-name">Höhe</span><input class="af-input num" type="number" min="3" max="120" @bind="_newH" /></label>
+                </div>
+                <p class="muted small">Oben links bleibt fest. Neue Felder sind „Nichts“.</p>
+                <button class="btn btn-small" @onclick="Resize">Größe ändern</button>
+            </section>
+            <section class="admin-box">
+                <h2>Objekte <span class="muted">@Floor.Objects.Count</span></h2>
+                <ul class="fe-objlist">
+                    @foreach (var ob in Floor.Objects.OrderBy(x => x.Kind).ThenBy(x => x.Y).ThenBy(x => x.X))
+                    {
+                        <li @onclick="() => Select(ob.Id)"><span class="fe-kindtag">@DungeonKinds.Name(ob.Kind)</span> @ObjTitle(ob) <span class="muted mono">@ob.X,@ob.Y</span></li>
+                    }
+                </ul>
+            </section>
+        }
+
+        <section class="admin-box">
+            <h2>Testen</h2>
+            <p class="muted small">Setzt die Spielfigur des aktuellen Spielstands auf @(_cell is var (cx2, cy2) ? $"Feld {cx2},{cy2}" : "den Eingang bzw. das erste begehbare Feld") dieses Stockwerks. Klicke vorher mit „Auswahl“ ein Feld an, um woanders zu starten.</p>
+            <button class="btn btn-small" @onclick="TestHere">▶ Hier testen</button>
+        </section>
+
+        @if (FloorIssues.Count > 0)
+        {
+            <section class="admin-box">
+                <h2>Prüfung <span class="muted">@FloorIssues.Count</span></h2>
+                <ul class="admin-issues">
+                    @foreach (var i in FloorIssues)
+                    {
+                        <li class="@(i.Severity == Severity.Error ? "bad" : "warn") @(i.Table == "DungeonObjects" ? "clickable" : "")"
+                            @onclick='() => { if (i.Table == "DungeonObjects" && long.TryParse(i.Key, out var oid)) Select(oid); }'>@i.Message</li>
+                    }
+                </ul>
+            </section>
+        }
+    </aside>
+</div>
+
+@code {
+    private const int T = 48;
+    [Parameter] public string Key { get; set; } = "";
+    [Parameter] public long Id { get; set; }
+
+    private static readonly (string Key, string Label, string Tip)[] Tools =
+    [
+        ("paint", "✎ Pinsel", "Kachel malen (gedrückt halten)"),
+        ("rect", "▭ Rechteck", "Rechteck aufziehen und füllen"),
+        ("fill", "◍ Füllen", "Zusammenhängende Fläche gleicher Kacheln füllen"),
+        ("pick", "⊙ Pipette", "Kachel von der Karte aufnehmen"),
+        ("select", "➤ Auswahl", "Objekt oder Feld auswählen"),
+    ];
+
+    private DungeonDef? _d;
+    private DungeonFloorDef? Floor => Content.Floors.GetValueOrDefault(Id);
+    private TableInfo? _objTable, _floorTable;
+
+    private string[][] _grid = [];
+    private int _w, _h;
+    private long _loadedId = -1;
+    private readonly Stack<string[][]> _undo = new();
+    private bool _dirty, _down, _showGrid = true, _bad, _testLink;
+    private string _tool = "paint", _brush = "floor", _objKind = "container";
+    private int _zoom = 32;
+    private (int X, int Y)? _hover, _cell, _rectStart, _rectEnd;
+    private long? _selected, _pickFor, _moveObj;
+    private string? _placeEffect, _msg;
+    private Dictionary<string, string?> _objForm = new();
+    private Dictionary<string, string> _objErrors = new();
+    private string? _floorName;
+    private int _floorSort, _floorDanger, _newW, _newH;
+
+    protected override void OnParametersSet()
+    {
+        _d = Content.Dungeons.GetValueOrDefault(Key);
+        _objTable = Admin.Table("DungeonObjects");
+        _floorTable = Admin.Table("DungeonFloors");
+        var f = Floor;
+        if (f is null) return;
+        if (_loadedId != f.Id)
+        {
+            _grid = DungeonFloorDef.ParseGrid(f.Tiles, f.Width, f.Height);
+            _w = f.Width; _h = f.Height;
+            _undo.Clear(); _dirty = false; _loadedId = f.Id;
+            _floorName = f.Name; _floorSort = f.SortOrder; _floorDanger = f.DangerOffset; _newW = f.Width; _newH = f.Height;
+            _selected = null; _cell = null; _hover = null; _msg = null;
+        }
+        // Modi aus der Adresse: ?pick=ObjektId, ?select=ObjektId, ?place=Effekt
+        var q = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        _pickFor = q.TryGetValue("pick", out var p) && long.TryParse(p, out var pid) ? pid : null;
+        _placeEffect = q.TryGetValue("place", out var pl) ? pl.ToString() : null;
+        if (q.TryGetValue("select", out var s) && long.TryParse(s, out var sid)) Select(sid);
+    }
+
+    // ================= Hilfen =================
+
+    private DungeonObjectDef? ObjectById(long? id) => id is long i ? Content.Floors.Values.SelectMany(f => f.Objects).FirstOrDefault(o => o.Id == i) : null;
+
+    private string ObjTitle(DungeonObjectDef? o) => o is null ? "" : o.Label
+        ?? (o.Kind == "enemy" && o.EnemyKey is not null ? Content.Enemies.GetValueOrDefault(o.EnemyKey)?.Name : null)
+        ?? (o.Kind == "event" && o.EventKey is not null ? Content.Events.GetValueOrDefault(o.EventKey)?.Title : null)
+        ?? (o.Kind == "trigger" && o.Effects is not null ? o.Effects : null)
+        ?? DungeonKinds.Name(o.Kind);
+
+    private IEnumerable<DungeonObjectDef> Incoming => Content.Floors.Values.SelectMany(f => f.Objects)
+        .Where(o => o.Kind == "transition" && o.TargetFloorId == Id && o.FloorId != Id && o.TargetX is not null && o.TargetY is not null);
+
+    private string GridPath
+    {
+        get
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int x = 1; x < _w; x++) sb.Append($"M{x * T} 0V{_h * T}");
+            for (int y = 1; y < _h; y++) sb.Append($"M0 {y * T}H{_w * T}");
+            return sb.ToString();
+        }
+    }
+
+    private List<Issue> FloorIssues
+    {
+        get
+        {
+            var ids = Floor?.Objects.Select(o => o.Id.ToString()).ToHashSet() ?? [];
+            return Validator.Run().Where(i => (i.Table == "DungeonFloors" && i.Key == Id.ToString()) || (i.Table == "DungeonObjects" && ids.Contains(i.Key ?? ""))).ToList();
+        }
+    }
+
+    private bool Passable(int x, int y) => Content.DungeonTiles.GetValueOrDefault(_grid[y][x])?.Passable == true;
+
+    private void Flash(string m, bool bad = false, bool testLink = false) { _msg = m; _bad = bad; _testLink = testLink; }
+
+    private void SetTool(string t) { _tool = t; CancelModes(); }
+
+    private bool PaintTool => _tool is "paint" or "rect" or "fill";
+    private string SwatchClass(DungeonTileDef t) => _brush == t.Key && PaintTool ? "active" : "";
+    private static string SwatchTitle(DungeonTileDef t) => t.Passable ? t.Name : t.Name + " (unbegehbar)";
+    private string KindClass(string k) => _tool == "object" && _objKind == k ? "active" : "";
+    private void ChooseKind(string k) { _tool = "object"; _objKind = k; CancelModes(); }
+    private void ChooseBrush(string key) { _brush = key; if (!PaintTool) _tool = "paint"; }
+
+    private void CancelModes()
+    {
+        _moveObj = null;
+        if (_pickFor is not null || _placeEffect is not null) { _pickFor = null; _placeEffect = null; Nav.NavigateTo($"/admin/ruins/{Key}/floor/{Id}", replace: true); }
+    }
+
+    // ================= Maus =================
+
+    private void Down(int x, int y)
+    {
+        _cell = (x, y);
+        if (_pickFor is long pid) { SetTarget(pid, x, y); return; }
+        if (_placeEffect is string eff) { PlaceEffect(eff, x, y); return; }
+        if (_moveObj is long mid) { MoveObject(mid, x, y); return; }
+        switch (_tool)
+        {
+            case "paint": PushUndo(); _down = true; Paint(x, y); break;
+            case "rect": PushUndo(); _down = true; _rectStart = _rectEnd = (x, y); break;
+            case "fill": PushUndo(); Fill(x, y); break;
+            case "pick": _brush = IsAutoCorridor(_grid[y][x]) ? AutoCorridor : _grid[y][x]; _tool = "paint"; break;
+            case "object": PlaceObject(x, y); break;
+            case "select": if (Floor!.ObjectAt(x, y) is { } o) Select(o.Id); else _selected = null; break;
+        }
+    }
+
+    private void Enter(int x, int y)
+    {
+        _hover = (x, y);
+        if (!_down) return;
+        if (_tool == "paint") Paint(x, y);
+        else if (_tool == "rect") _rectEnd = (x, y);
+    }
+
+    private void Up()
+    {
+        if (_down && _tool == "rect" && _rectStart is var (x1, y1) && _rectEnd is var (x2, y2))
+        {
+            for (int y = Math.Min(y1, y2); y <= Math.Max(y1, y2); y++)
+                for (int x = Math.Min(x1, x2); x <= Math.Max(x1, x2); x++)
+                    Set(x, y);
+            // Gaenge am Rand des Rechtecks neu ausrichten
+            for (int y = Math.Min(y1, y2) - 1; y <= Math.Max(y1, y2) + 1; y++)
+                for (int x = Math.Min(x1, x2) - 1; x <= Math.Max(x1, x2) + 1; x++)
+                    if (x >= 0 && y >= 0 && x < _w && y < _h && IsAutoCorridor(_grid[y][x])) UpdateCorridorShape(x, y);
+        }
+        _down = false;
+        _rectStart = _rectEnd = null;
+    }
+
+    // ================= Malen =================
+
+    private void PushUndo()
+    {
+        _undo.Push(_grid.Select(r => (string[])r.Clone()).ToArray());
+        if (_undo.Count > 60) { var keep = _undo.Take(60).Reverse().ToList(); _undo.Clear(); foreach (var k in keep) _undo.Push(k); }
+    }
+
+    private void Undo()
+    {
+        if (_undo.Count == 0) return;
+        _grid = _undo.Pop();
+        _dirty = true;
+    }
+
+    private const string AutoCorridor = "_auto_corridor";
+
+    private void Set(int x, int y)
+    {
+        if (_brush == AutoCorridor) { SetCorridor(x, y); return; }
+        if (_grid[y][x] == _brush) return;
+        _grid[y][x] = _brush;
+        _dirty = true;
+        RefreshCorridorNeighbours(x, y);
+    }
+
+    private static bool IsAutoCorridor(string key) => key.StartsWith("corridor_") && !key.StartsWith("corridor_door");
+
+    /// <summary>Gangstueck setzen und Form aus den Nachbarn ableiten; angrenzende Gaenge passen sich an.</summary>
+    private void SetCorridor(int x, int y)
+    {
+        if (!IsAutoCorridor(_grid[y][x])) { _grid[y][x] = "corridor_nesw"; _dirty = true; }
+        UpdateCorridorShape(x, y);
+        RefreshCorridorNeighbours(x, y);
+    }
+
+    private void RefreshCorridorNeighbours(int x, int y)
+    {
+        foreach (var (nx, ny) in new[] { (x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y) })
+            if (nx >= 0 && ny >= 0 && nx < _w && ny < _h && IsAutoCorridor(_grid[ny][nx])) UpdateCorridorShape(nx, ny);
+    }
+
+    private void UpdateCorridorShape(int x, int y)
+    {
+        bool Open(int nx, int ny) => nx >= 0 && ny >= 0 && nx < _w && ny < _h
+                                     && Content.DungeonTiles.GetValueOrDefault(_grid[ny][nx])?.Passable == true;
+        var sides = (Open(x, y - 1) ? "n" : "") + (Open(x + 1, y) ? "e" : "") + (Open(x, y + 1) ? "s" : "") + (Open(x - 1, y) ? "w" : "");
+        var key = "corridor_" + (sides == "" ? "ns" : sides);
+        if (!Content.DungeonTiles.ContainsKey(key)) key = "corridor_nesw";
+        if (_grid[y][x] != key) { _grid[y][x] = key; _dirty = true; }
+    }
+
+    private void Paint(int x, int y) => Set(x, y);
+
+    private void Fill(int sx, int sy)
+    {
+        if (_brush == AutoCorridor) { Flash("Füllen geht nicht mit dem automatischen Gang – dafür Pinsel oder Rechteck nutzen.", bad: true); return; }
+        var from = _grid[sy][sx];
+        if (from == _brush) return;
+        var q = new Queue<(int, int)>();
+        q.Enqueue((sx, sy));
+        while (q.Count > 0)
+        {
+            var (x, y) = q.Dequeue();
+            if (x < 0 || y < 0 || x >= _w || y >= _h || _grid[y][x] != from) continue;
+            _grid[y][x] = _brush;
+            q.Enqueue((x + 1, y)); q.Enqueue((x - 1, y)); q.Enqueue((x, y + 1)); q.Enqueue((x, y - 1));
+        }
+        _dirty = true;
+    }
+
+    private void SaveTiles()
+    {
+        Admin.Update(_floorTable!, Id, new Dictionary<string, object?> { ["Tiles"] = DungeonFloorDef.SerializeGrid(_grid) });
+        _dirty = false;
+        Flash("Karte gespeichert.");
+    }
+
+    private void SaveIfDirty() { if (_dirty) SaveTiles(); }
+
+    private async Task OnBeforeNavigation(LocationChangingContext ctx)
+    {
+        if (!_dirty) return;
+        if (!await JS.InvokeAsync<bool>("confirm", "Die Karte hat ungespeicherte Änderungen. Trotzdem verlassen?"))
+            ctx.PreventNavigation();
+        else
+            _dirty = false;
+    }
+
+    private void SwitchFloor(ChangeEventArgs e)
+    {
+        if (long.TryParse(e.Value?.ToString(), out var fid) && fid != Id) Nav.NavigateTo($"/admin/ruins/{Key}/floor/{fid}");
+    }
+
+    // ================= Stockwerk =================
+
+    private void SaveFloorSettings()
+    {
+        Admin.Update(_floorTable!, Id, new Dictionary<string, object?>
+        {
+            ["Name"] = string.IsNullOrWhiteSpace(_floorName) ? "Ebene" : _floorName.Trim(),
+            ["SortOrder"] = (long)_floorSort, ["DangerOffset"] = (long)Math.Max(0, _floorDanger),
+        });
+        Flash("Stockwerk gespeichert.");
+    }
+
+    private void Resize()
+    {
+        int w = Math.Clamp(_newW, 3, 120), h = Math.Clamp(_newH, 3, 120);
+        var outside = Floor!.Objects.Where(o => o.X >= w || o.Y >= h).ToList();
+        if (outside.Count > 0)
+        {
+            Flash($"Erst diese Objekte verschieben oder löschen, sie lägen außerhalb: {string.Join(", ", outside.Select(o => $"{ObjTitle(o)} ({o.X},{o.Y})"))}", bad: true);
+            return;
+        }
+        PushUndo();
+        var g = new string[h][];
+        for (int y = 0; y < h; y++)
+        {
+            g[y] = new string[w];
+            for (int x = 0; x < w; x++) g[y][x] = y < _h && x < _w ? _grid[y][x] : "void";
+        }
+        _undo.Clear(); // Groessenwechsel ist nicht rueckgaengig zu machen
+        Admin.Update(_floorTable!, Id, new Dictionary<string, object?>
+        {
+            ["Width"] = (long)w, ["Height"] = (long)h, ["Tiles"] = DungeonFloorDef.SerializeGrid(g),
+        });
+        _grid = g; _w = w; _h = h; _dirty = false;
+        Flash($"Größe auf {w} × {h} geändert und gespeichert.");
+    }
+
+    // ================= Objekte =================
+
+    private void Select(long id)
+    {
+        var o = ObjectById(id);
+        if (o is null) return;
+        if (o.FloorId != Id) { Nav.NavigateTo($"/admin/ruins/{Key}/floor/{o.FloorId}?select={id}"); return; }
+        _selected = id;
+        _objErrors.Clear();
+        var row = Admin.Row(_objTable!, id);
+        _objForm = _objTable!.Columns.ToDictionary(c => c.Name, c => (string?)row?.Text(c.Name));
+    }
+
+    private static string[] KindColumns(string kind) => kind switch
+    {
+        "entrance" => ["Label"],
+        "exit" => ["Label", "Description", "Icon"],
+        "transition" => ["Label", "Description", "Icon", "TargetFloorId", "TargetX", "TargetY"],
+        "container" or "door" => ["Label", "Description", "Icon", "SkillKey", "Difficulty", "Effects", "FailEffects"],
+        "enemy" => ["EnemyKey", "Label", "Description", "Effects"],
+        "event" => ["EventKey", "Icon"],
+        "trigger" => ["Label", "Description", "Icon", "Effects"],
+        _ => ["Label", "Description", "Icon", "Effects"],
+    };
+
+    private static string KindHelp(string kind) => kind switch
+    {
+        "entrance" => "Hier startet man beim Betreten der Ruine. Pro Ruine reicht einer (auf dem ersten Stockwerk).",
+        "exit" => "Betreten öffnet die Frage „Ruine verlassen?“.",
+        "transition" => "Treppe, Leiter, Schacht: Betreten bringt dich zum Zielfeld – auch auf ein anderes Stockwerk.",
+        "container" => "Kiste, Schrank, Spind. Wird durch Anlaufen geöffnet. Inhalt = Effekte (z. B. item:medkit:1;loot:2). Mit Probe: verschlossen.",
+        "door" => "Versperrt den Weg, bis sie geöffnet ist. Mit Probe: abgeschlossen. Danach verschwindet das Symbol.",
+        "enemy" => "Versperrt den Weg. Anlaufen startet den Kampf. Effekte = Belohnung nach dem Sieg.",
+        "event" => "Öffnet ein Ereignis aus der Tabelle Ereignisse (Art dungeon empfohlen).",
+        "trigger" => "Unsichtbar (außer mit Symbol). Löst beim Betreten einmalig Effekte aus, z. B. story:KEY oder damage:2-5 als Falle.",
+        _ => "",
+    };
+
+    private void PlaceObject(int x, int y)
+    {
+        if (Floor!.ObjectAt(x, y) is { } existing) { Select(existing.Id); return; }
+        var icon = DungeonKinds.All.First(k => k.Key == _objKind).DefaultIcon;
+        var values = new Dictionary<string, object?>
+        {
+            ["FloorId"] = Id, ["X"] = (long)x, ["Y"] = (long)y, ["Kind"] = _objKind, ["Icon"] = icon,
+            ["Label"] = _objKind switch { "container" => "Kiste", "door" => "Tür", "exit" => "Ausgang", "transition" => "Treppe", _ => null },
+        };
+        if (_objKind == "enemy") values["EnemyKey"] = Content.Enemies.Values.OrderBy(e => e.MinDanger).ThenBy(e => e.Key).FirstOrDefault()?.Key;
+        if (_objKind == "event") values["EventKey"] = Content.Events.Values.FirstOrDefault(e => e.Kind == "dungeon")?.Key ?? Content.Events.Keys.FirstOrDefault();
+        var id = Admin.Insert(_objTable!, values);
+        Select(id);
+        Flash($"{DungeonKinds.Name(_objKind)} gesetzt. Eigenschaften rechts bearbeiten.");
+    }
+
+    private void SaveObject()
+    {
+        var o = ObjectById(_selected);
+        if (o is null) return;
+        _objErrors.Clear();
+        var values = new Dictionary<string, object?>();
+        var kind = _objForm.GetValueOrDefault("Kind") ?? o.Kind;
+        values["Kind"] = kind;
+        foreach (var col in KindColumns(kind))
+        {
+            var ci = _objTable!.Column(col)!;
+            var v = ContentAdmin.Convert(ci, _objForm.GetValueOrDefault(col), out var err);
+            if (err is not null) _objErrors[col] = err;
+            values[col] = v;
+        }
+        if (_objErrors.Count > 0) { Flash("Bitte die markierten Felder prüfen.", bad: true); return; }
+        try
+        {
+            Admin.Update(_objTable!, o.Id, values);
+            Select(o.Id);
+            Flash("Objekt gespeichert.");
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex) { Flash("Datenbankfehler: " + ex.Message, bad: true); }
+    }
+
+    private void DeleteObject()
+    {
+        if (ObjectById(_selected) is not { } o) return;
+        Admin.Delete(_objTable!, o.Id, cascade: true);
+        _selected = null;
+        Flash($"{DungeonKinds.Name(o.Kind)} gelöscht.");
+    }
+
+    private void MoveObject(long id, int x, int y)
+    {
+        _moveObj = null;
+        if (Floor!.ObjectAt(x, y) is { } other && other.Id != id) { Flash("Auf dem Feld liegt schon ein Objekt.", bad: true); return; }
+        Admin.Update(_objTable!, id, new Dictionary<string, object?> { ["X"] = (long)x, ["Y"] = (long)y });
+        Select(id);
+        Flash("Objekt verschoben.");
+    }
+
+    private void AppendStory(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString();
+        if (string.IsNullOrEmpty(key)) return;
+        _objForm["Effects"] = AppendEffect(_objForm.GetValueOrDefault("Effects"), $"story:{key}");
+    }
+
+    public static string AppendEffect(string? existing, string add)
+    {
+        var parts = (existing ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        if (!parts.Contains(add)) parts.Add(add);
+        return string.Join(";", parts);
+    }
+
+    // ================= Uebergaenge =================
+
+    private void PickTarget(DungeonObjectDef o)
+    {
+        var target = long.TryParse(_objForm.GetValueOrDefault("TargetFloorId"), out var tf) ? tf : o.TargetFloorId ?? Id;
+        // Eingetragenes Ziel-Stockwerk vorher uebernehmen
+        if (target != o.TargetFloorId) Admin.Update(_objTable!, o.Id, new Dictionary<string, object?> { ["TargetFloorId"] = target });
+        SaveIfDirty();
+        var tfKey = Content.Floors.GetValueOrDefault(target)?.DungeonKey ?? Key;
+        Nav.NavigateTo($"/admin/ruins/{tfKey}/floor/{target}?pick={o.Id}");
+    }
+
+    private void SetTarget(long objId, int x, int y)
+    {
+        if (!Passable(x, y)) { Flash("Das Zielfeld muss begehbar sein.", bad: true); return; }
+        var o = ObjectById(objId);
+        if (o is null) { CancelModes(); return; }
+        Admin.Update(_objTable!, objId, new Dictionary<string, object?> { ["TargetFloorId"] = Id, ["TargetX"] = (long)x, ["TargetY"] = (long)y });
+        SaveIfDirty();
+        var src = Content.Floors.GetValueOrDefault(o.FloorId);
+        Nav.NavigateTo($"/admin/ruins/{src?.DungeonKey ?? Key}/floor/{o.FloorId}?select={objId}");
+    }
+
+    private void CreateReturn(DungeonObjectDef o)
+    {
+        if (o.TargetFloorId is not long tf || !Content.Floors.TryGetValue(tf, out var target) || o.TargetX is not int tx || o.TargetY is not int ty)
+        {
+            Flash("Erst ein Ziel festlegen.", bad: true);
+            return;
+        }
+        if (target.ObjectAt(tx, ty) is { } existing)
+        {
+            Flash($"Auf dem Zielfeld liegt schon „{ObjTitle(existing)}“.", bad: true);
+            return;
+        }
+        var icon = o.Icon switch { "obj_stairs_down" => "obj_stairs_up", "obj_stairs_up" => "obj_stairs_down", var i => i };
+        var id = Admin.Insert(_objTable!, new Dictionary<string, object?>
+        {
+            ["FloorId"] = tf, ["X"] = (long)tx, ["Y"] = (long)ty, ["Kind"] = "transition", ["Icon"] = icon,
+            ["Label"] = $"Zurück: {Floor!.Name}", ["TargetFloorId"] = Id, ["TargetX"] = (long)o.X, ["TargetY"] = (long)o.Y,
+        });
+        Flash($"Rückweg auf „{target.Name}“ ({tx},{ty}) angelegt.");
+    }
+
+    // ================= Storyboard-Verknuepfung =================
+
+    private void PlaceEffect(string effect, int x, int y)
+    {
+        long id;
+        if (Floor!.ObjectAt(x, y) is { } o)
+        {
+            Admin.Update(_objTable!, o.Id, new Dictionary<string, object?> { ["Effects"] = AppendEffect(o.Effects, effect) });
+            id = o.Id;
+        }
+        else
+        {
+            if (!Passable(x, y)) { Flash("Auslöser brauchen ein begehbares Feld.", bad: true); return; }
+            id = Admin.Insert(_objTable!, new Dictionary<string, object?>
+            {
+                ["FloorId"] = Id, ["X"] = (long)x, ["Y"] = (long)y, ["Kind"] = "trigger", ["Effects"] = effect,
+            });
+        }
+        _placeEffect = null;
+        Nav.NavigateTo($"/admin/ruins/{Key}/floor/{Id}?select={id}", replace: true);
+        Flash($"{effect} verknüpft.");
+    }
+
+    // ================= Testen =================
+
+    private void TestHere()
+    {
+        if (!Saves.Exists()) { Flash("Es gibt noch keinen Spielstand. Starte zuerst ein Spiel.", bad: true); return; }
+        SaveIfDirty();
+        (int x, int y)? start = _cell is var (cx, cy) && Passable(cx, cy) && Floor!.ObjectAt(cx, cy) is not { Blocks: true } ? (cx, cy) : null;
+        start ??= Floor!.Objects.FirstOrDefault(o => o.Kind == "entrance") is { } ent ? (ent.X, ent.Y) : null;
+        if (start is null)
+            for (int y = 0; y < _h && start is null; y++)
+                for (int x = 0; x < _w; x++)
+                    if (Passable(x, y) && Floor!.ObjectAt(x, y) is null) { start = (x, y); break; }
+        if (start is not var (sx, sy)) { Flash("Kein begehbares Feld auf diesem Stockwerk.", bad: true); return; }
+        Saves.PlaceInDungeon(Key, Id, sx, sy);
+        Saves.NotifyExternalChange();
+        Flash($"Spielfigur steht jetzt auf {Floor!.Name} {sx},{sy}.", testLink: true);
+    }
+}

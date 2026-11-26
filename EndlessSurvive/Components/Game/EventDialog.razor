@@ -6,10 +6,10 @@
 <div class="overlay">
     <div class="dialog event-dialog">
         <div class="event-head" style="--biome:@ev.Tile.Biome.Color">
-            <span class="event-marker">@ev.Def.Marker</span>
+            <span class="event-marker">@(ev.Def.Key == "_dungeon" ? "◆" : ev.Def.Marker)</span>
             <div>
                 <h2>@ev.Def.Title</h2>
-                <small>@ev.Tile.Biome.Name · Gefahrenstufe @ev.Tile.Danger</small>
+                <small>@(Game.State!.InDungeon ? $"{Game.CurrentDungeon?.Name} · {Game.CurrentFloor?.Name}" : ev.Tile.Biome.Name) · Gefahrenstufe @ev.Tile.Danger</small>
             </div>
         </div>
         <p class="event-text">@ev.Def.Text</p>

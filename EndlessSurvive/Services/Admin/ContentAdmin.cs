@@ -270,17 +270,33 @@ public sealed class ContentAdmin
             Backup();
             var row = Row(t, rowId);
             if (row is null) return;
+            // Erst den kompletten Plan lesen (rekursiv: Ruine -> Stockwerke -> Objekte), dann in einer Transaktion ausfuehren
+            var plan = new List<(string Sql, object Args)>();
+            if (cascade) PlanCascade(t, row, plan, new HashSet<(string, long)>());
+            plan.Add(($"DELETE FROM {Q(t.Name)} WHERE rowid = @rowId", new { rowId }));
             using var c = Open();
             using var tx = c.BeginTransaction();
-            if (cascade)
-                foreach (var ch in Children(t, row))
-                    c.Execute(ch.Column.NotNull
-                            ? $"DELETE FROM {Q(ch.Table.Name)} WHERE {Q(ch.Column.Name)} = @v"
-                            : $"UPDATE {Q(ch.Table.Name)} SET {Q(ch.Column.Name)} = NULL WHERE {Q(ch.Column.Name)} = @v",
-                        new { v = row[t.Pk!.Name] }, tx);
-            c.Execute($"DELETE FROM {Q(t.Name)} WHERE rowid = @rowId", new { rowId }, tx);
+            foreach (var (sql, args) in plan) c.Execute(sql, args, tx);
             tx.Commit();
             AfterWrite();
+        }
+    }
+
+    private void PlanCascade(TableInfo t, ContentRow row, List<(string, object)> plan, HashSet<(string, long)> seen)
+    {
+        if (!seen.Add((t.Name, row.RowId))) return;
+        foreach (var ch in Children(t, row))
+        {
+            var v = row[t.Pk!.Name];
+            if (ch.Column.NotNull)
+            {
+                foreach (var child in ch.Rows) PlanCascade(ch.Table, child, plan, seen); // Enkel zuerst
+                plan.Add(($"DELETE FROM {Q(ch.Table.Name)} WHERE {Q(ch.Column.Name)} = @v", new { v }));
+            }
+            else
+            {
+                plan.Add(($"UPDATE {Q(ch.Table.Name)} SET {Q(ch.Column.Name)} = NULL WHERE {Q(ch.Column.Name)} = @v", new { v }));
+            }
         }
     }
 

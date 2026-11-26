@@ -35,8 +35,16 @@
     </div>
     <div class="admin-actions">
         <button class="btn btn-small" @onclick="() => _s.Char.Hp = MaxHp">Voll heilen</button>
-        <button class="btn btn-small" @onclick="() => { _s.Char.X = 0; _s.Char.Y = 0; }">Zum Bunker</button>
+        <button class="btn btn-small" @onclick="() => { _s.Char.X = 0; _s.Char.Y = 0; _s.Char.DungeonKey = null; }">Zum Bunker</button>
+        @if (_s.Char.DungeonKey is { } dk)
+        {
+            <button class="btn btn-small" @onclick="() => _s.Char.DungeonKey = null">An die Oberfläche holen</button>
+        }
     </div>
+    @if (_s.Char.DungeonKey is { } dk2)
+    {
+        <p class="small">In Ruine: <a href="/admin/ruins/@dk2/floor/@_s.Char.FloorId">@(Content.Dungeons.GetValueOrDefault(dk2)?.Name ?? dk2) · @(Content.Floors.GetValueOrDefault(_s.Char.FloorId)?.Name ?? "?")</a> · Feld @_s.Char.FX, @_s.Char.FY</p>
+    }
     <p class="muted small">Seed @_s.Char.Seed · Züge @_s.Char.Turn · Siege @_s.Char.Kills · Tode @_s.Char.Deaths · angelegt @_s.Char.CreatedAt</p>
 </section>
 
@@ -93,12 +101,14 @@
 
 <section class="admin-box">
     <h2>Fortschritt <span class="muted">wirkt sofort, ohne „Speichern“</span></h2>
+    <p>@_s.FoundStories.Count von @Content.Stories.Count Story-Szenen · @_s.UsedObjects.Count erledigte Ruinen-Objekte</p>
     <p>@_s.FoundLore.Count von @Content.Lore.Count Infofragmenten gefunden · @_s.Tiles.Count erkundete Felder, davon @_s.Tiles.Values.Count(f => f.HasFlag(TileFlags.Resolved)) erledigte Orte</p>
     <div class="admin-actions">
         <button class="btn btn-small" @onclick='() => Act(() => Saves.SetLore(Content.Lore.Select(l => l.Id)), "Alle Infofragmente freigeschaltet.")'>Alle Infofragmente freischalten</button>
         <button class="btn btn-small" @onclick='() => Act(() => Saves.SetLore([]), "Journal geleert.")'>Journal leeren</button>
         <button class="btn btn-small" @onclick='() => Act(() => Saves.ResetTiles(resolvedOnly: true), "Erledigte Orte wieder geöffnet.")'>Erledigte Orte wieder öffnen</button>
         <button class="btn btn-small" @onclick='() => Act(() => Saves.ResetTiles(resolvedOnly: false), "Karte zurückgesetzt.")'>Karte komplett verdecken</button>
+        <button class="btn btn-small" @onclick='() => Act(() => Saves.ResetDungeons(), "Ruinen zurückgesetzt: Kisten, Türen und Gegner sind wieder da.")'>Ruinen-Fortschritt zurücksetzen</button>
     </div>
 </section>
 

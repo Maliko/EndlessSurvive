@@ -1,0 +1,129 @@
+@page "/admin/ruins/{Key}"
+@layout AdminLayout
+@inject ContentAdmin Admin
+@inject ContentStore Content
+@inject ContentValidator Validator
+@inject NavigationManager Nav
+
+<PageTitle>@(_d?.Name ?? Key) – Ruinen</PageTitle>
+
+@if (_d is null)
+{
+    <p>Ruine „@Key“ gibt es nicht. <a href="/admin/ruins">Zur Übersicht</a></p>
+    return;
+}
+
+<header class="admin-head">
+    <div class="admin-crumbs"><a href="/admin/ruins">Ruinen</a> /</div>
+    <div class="admin-head-row">
+        <h1><span class="ruin-marker" style="color:@_d.Color;border-color:@_d.Color">@_d.Marker</span> @_d.Name</h1>
+        <div class="admin-actions">
+            <a class="btn" href="/admin/t/Dungeons/find?key=@_d.Key">Einstellungen</a>
+            <a class="btn btn-primary" href="/admin/ruins/@_d.Key/story">Storyboard</a>
+        </div>
+    </div>
+    <p class="muted">@_d.Description</p>
+    <p class="muted small mono">Biome: @_d.Biomes · Gefahr @_d.MinDanger–@(_d.MaxDanger?.ToString() ?? "∞") · Häufigkeit @_d.Weight</p>
+</header>
+
+@if (_msg is not null) { <div class="admin-flash @(_bad ? "bad" : "")">@_msg</div> }
+
+@if (_issues.Count > 0)
+{
+    <ul class="admin-issues">
+        @foreach (var i in _issues) { <li class="@(i.Severity == Severity.Error ? "bad" : "warn")">@i.Message</li> }
+    </ul>
+}
+
+<section class="admin-box">
+    <h2>Stockwerke</h2>
+    @if (_d.Floors.Count == 0) { <p class="muted">Noch keine. Lege unten das erste an – es bekommt den Eingang.</p> }
+    <div class="floor-list">
+        @foreach (var f in _d.Floors.OrderBy(f => f.SortOrder).ThenBy(f => f.Id))
+        {
+            <div class="floor-item">
+                <a href="/admin/ruins/@_d.Key/floor/@f.Id"><FloorPreview Floor="f" MaxWidth="300" /></a>
+                <div class="floor-info">
+                    <strong>@f.SortOrder. @f.Name</strong>
+                    <span class="muted mono">@f.Width × @f.Height · Gefahr +@f.DangerOffset</span>
+                    <span class="muted small">@string.Join(" · ", f.Objects.GroupBy(o => o.Kind).Select(g => $"{g.Count()} {DungeonKinds.Name(g.Key)}"))</span>
+                    <div class="admin-actions">
+                        <a class="btn btn-small btn-primary" href="/admin/ruins/@_d.Key/floor/@f.Id">Karte bearbeiten</a>
+                        @if (_confirmDelete == f.Id)
+                        {
+                            <button class="btn btn-small btn-danger" @onclick="() => DeleteFloor(f)">Wirklich löschen (mit @f.Objects.Count Objekten)</button>
+                            <button class="btn btn-small" @onclick="() => _confirmDelete = null">Abbrechen</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-small btn-ghost" @onclick="() => _confirmDelete = f.Id">Löschen</button>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</section>
+
+<section class="admin-box">
+    <h2>Neues Stockwerk</h2>
+    <div class="admin-form compact">
+        <label class="af"><span class="af-name">Name</span><input class="af-input" @bind="_fName" placeholder="z. B. Keller" /></label>
+        <label class="af"><span class="af-name">Breite</span><input class="af-input num" type="number" min="3" max="120" @bind="_fW" /></label>
+        <label class="af"><span class="af-name">Höhe</span><input class="af-input num" type="number" min="3" max="120" @bind="_fH" /></label>
+        <label class="af"><span class="af-name">Ausfüllen mit</span>
+            <select class="af-input" @bind="_fFill">
+                @foreach (var t in Content.DungeonTiles.Values.Where(t => t.Layer == "terrain")) { <option value="@t.Key">@t.Name</option> }
+            </select>
+        </label>
+        <label class="af"><span class="af-name">Gefahr +</span><input class="af-input num" type="number" min="0" @bind="_fDanger" /></label>
+    </div>
+    <button class="btn btn-primary" @onclick="CreateFloor">Anlegen und Karte zeichnen</button>
+</section>
+
+@code {
+    [Parameter] public string Key { get; set; } = "";
+    private DungeonDef? _d;
+    private List<Issue> _issues = [];
+    private string? _msg;
+    private bool _bad;
+    private long? _confirmDelete;
+    private string _fName = "", _fFill = "void";
+    private int _fW = 24, _fH = 16, _fDanger;
+
+    protected override void OnParametersSet() => Refresh();
+
+    private void Refresh()
+    {
+        _d = Content.Dungeons.GetValueOrDefault(Key);
+        if (_d is null) return;
+        var floorIds = _d.Floors.Select(f => f.Id.ToString()).ToHashSet();
+        var objIds = _d.Floors.SelectMany(f => f.Objects).Select(o => o.Id.ToString()).ToHashSet();
+        _issues = Validator.Run().Where(i =>
+            (i.Table == "Dungeons" && i.Key == Key) || (i.Table == "DungeonFloors" && floorIds.Contains(i.Key ?? "")) ||
+            (i.Table == "DungeonObjects" && objIds.Contains(i.Key ?? ""))).ToList();
+        if (_fName == "") _fName = _d.Floors.Count == 0 ? "Erdgeschoss" : $"Ebene {_d.Floors.Count + 1}";
+    }
+
+    private void CreateFloor()
+    {
+        int w = Math.Clamp(_fW, 3, 120), h = Math.Clamp(_fH, 3, 120);
+        var row = string.Join(",", Enumerable.Repeat(_fFill, w));
+        var tiles = string.Join("\n", Enumerable.Repeat(row, h));
+        var id = Admin.Insert(Admin.Table("DungeonFloors")!, new Dictionary<string, object?>
+        {
+            ["DungeonKey"] = Key, ["Name"] = _fName.Trim() == "" ? "Ebene" : _fName.Trim(),
+            ["SortOrder"] = (long)(_d!.Floors.Count == 0 ? 1 : _d.Floors.Max(f => f.SortOrder) + 1),
+            ["Width"] = (long)w, ["Height"] = (long)h, ["DangerOffset"] = (long)_fDanger, ["Tiles"] = tiles,
+        });
+        Nav.NavigateTo($"/admin/ruins/{Key}/floor/{id}");
+    }
+
+    private void DeleteFloor(DungeonFloorDef f)
+    {
+        Admin.Delete(Admin.Table("DungeonFloors")!, f.Id, cascade: true);
+        _confirmDelete = null;
+        _msg = $"Stockwerk „{f.Name}“ gelöscht."; _bad = false;
+        Refresh();
+    }
+}

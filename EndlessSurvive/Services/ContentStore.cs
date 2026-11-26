@@ -21,6 +21,10 @@ public sealed class ContentStore
     public IReadOnlyDictionary<string, EventDef> Events { get; private set; } = new Dictionary<string, EventDef>();
     public IReadOnlyList<LoreDef> Lore { get; private set; } = [];
     public IReadOnlyDictionary<string, TraderDef> Traders { get; private set; } = new Dictionary<string, TraderDef>();
+    public IReadOnlyDictionary<string, DungeonTileDef> DungeonTiles { get; private set; } = new Dictionary<string, DungeonTileDef>();
+    public IReadOnlyDictionary<string, DungeonDef> Dungeons { get; private set; } = new Dictionary<string, DungeonDef>();
+    public IReadOnlyDictionary<long, DungeonFloorDef> Floors { get; private set; } = new Dictionary<long, DungeonFloorDef>();
+    public IReadOnlyDictionary<string, DungeonStoryDef> Stories { get; private set; } = new Dictionary<string, DungeonStoryDef>();
 
     public string DbPath { get; }
 
@@ -60,6 +64,18 @@ public sealed class ContentStore
         Events = events;
         Lore = c.Query<LoreDef>("SELECT * FROM Lore ORDER BY MinDanger, Id").ToList();
         Traders = c.Query<TraderDef>("SELECT * FROM Traders").ToDictionary(t => t.Key);
+
+        // Ruinen
+        DungeonTiles = c.Query<DungeonTileDef>("SELECT * FROM DungeonTiles ORDER BY SortOrder, Key").ToDictionary(t => t.Key);
+        var dungeons = c.Query<DungeonDef>("SELECT * FROM Dungeons").ToDictionary(d => d.Key);
+        var floors = c.Query<DungeonFloorDef>("SELECT * FROM DungeonFloors ORDER BY SortOrder, Id").ToDictionary(f => f.Id);
+        foreach (var o in c.Query<DungeonObjectDef>("SELECT * FROM DungeonObjects ORDER BY Id"))
+            if (floors.TryGetValue(o.FloorId, out var f)) f.Objects.Add(o);
+        foreach (var f in floors.Values)
+            if (dungeons.TryGetValue(f.DungeonKey, out var d)) d.Floors.Add(f);
+        Dungeons = dungeons;
+        Floors = floors;
+        Stories = c.Query<DungeonStoryDef>("SELECT * FROM DungeonStory ORDER BY SortOrder, Key").ToDictionary(s => s.Key);
         Version++;
     }
 

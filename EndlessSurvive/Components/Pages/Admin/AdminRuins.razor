@@ -1,0 +1,66 @@
+@page "/admin/ruins"
+@layout AdminLayout
+@inject ContentAdmin Admin
+@inject ContentStore Content
+@inject ContentValidator Validator
+@inject NavigationManager Nav
+
+<PageTitle>Ruinen – Verwaltung</PageTitle>
+
+<header class="admin-head">
+    <h1>Ruinen-Editor</h1>
+    <p class="muted">Begehbare Ruinen mit eigenen Karten. Eine Ruine erscheint zufällig auf der Weltkarte (Biome, Gefahrenstufe, Häufigkeit; Dichte über <code>Settings.DungeonChance</code>), sobald sie einen Eingang hat.</p>
+</header>
+
+@if (_msg is not null) { <div class="admin-flash bad">@_msg</div> }
+
+<div class="ruin-grid">
+    @foreach (var d in Content.Dungeons.Values.OrderBy(d => d.Name))
+    {
+        var first = d.Floors.FirstOrDefault();
+        var errors = _issues.Count(i => i.Severity == Severity.Error && Belongs(i, d));
+        <a class="ruin-card" href="/admin/ruins/@d.Key">
+            @if (first is not null) { <FloorPreview Floor="first" MaxWidth="320" /> } else { <div class="floor-empty">Noch kein Stockwerk</div> }
+            <div class="ruin-card-body">
+                <strong><span class="ruin-marker" style="color:@d.Color;border-color:@d.Color">@d.Marker</span> @d.Name</strong>
+                <span class="muted mono">@d.Floors.Count Stockwerk(e) · @d.Floors.Sum(f => f.Objects.Count) Objekte · ab Gefahr @d.MinDanger</span>
+                @if (errors > 0) { <span class="ruin-err">@errors Fehler</span> }
+                else if (d.Entrance is null) { <span class="ruin-err">kein Eingang</span> }
+            </div>
+        </a>
+    }
+</div>
+
+<section class="admin-box">
+    <h2>Neue Ruine</h2>
+    <div class="admin-form compact">
+        <label class="af"><span class="af-name">Schlüssel</span><input class="af-input" @bind="_key" placeholder="z. B. hospital" /></label>
+        <label class="af"><span class="af-name">Name</span><input class="af-input" @bind="_name" placeholder="z. B. Altes Krankenhaus" /></label>
+    </div>
+    <button class="btn btn-primary" @onclick="Create">Anlegen</button>
+</section>
+
+@code {
+    private IReadOnlyList<Issue> _issues = [];
+    private string _key = "", _name = "";
+    private string? _msg;
+
+    protected override void OnInitialized() => _issues = Validator.Run();
+
+    private bool Belongs(Issue i, DungeonDef d) => i.Table switch
+    {
+        "Dungeons" => i.Key == d.Key,
+        "DungeonFloors" => d.Floors.Any(f => f.Id.ToString() == i.Key),
+        "DungeonObjects" => d.Floors.Any(f => f.Objects.Any(o => o.Id.ToString() == i.Key)),
+        _ => false,
+    };
+
+    private void Create()
+    {
+        var key = _key.Trim().ToLowerInvariant().Replace(' ', '_');
+        if (key == "" || _name.Trim() == "") { _msg = "Schlüssel und Name angeben."; return; }
+        if (Content.Dungeons.ContainsKey(key)) { _msg = "Diesen Schlüssel gibt es schon."; return; }
+        Admin.Insert(Admin.Table("Dungeons")!, new Dictionary<string, object?> { ["Key"] = key, ["Name"] = _name.Trim() });
+        Nav.NavigateTo($"/admin/ruins/{key}");
+    }
+}

@@ -2,7 +2,7 @@ using EndlessSurvive.Models;
 
 namespace EndlessSurvive.Services;
 
-public sealed record TileInfo(int X, int Y, BiomeDef Biome, int Danger, EventDef? Poi);
+public sealed record TileInfo(int X, int Y, BiomeDef Biome, int Danger, EventDef? Poi, DungeonDef? Dungeon = null);
 
 /// <summary>
 /// Unendliche, deterministische Welt: Alles wird aus Seed und Koordinaten berechnet.
@@ -10,7 +10,7 @@ public sealed record TileInfo(int X, int Y, BiomeDef Biome, int Danger, EventDef
 /// </summary>
 public sealed class WorldGen
 {
-    private const int SaltHeight = 11, SaltMoist = 23, SaltPoi = 37, SaltPoiPick = 41;
+    private const int SaltHeight = 11, SaltMoist = 23, SaltPoi = 37, SaltPoiPick = 41, SaltDungeon = 53, SaltDungeonPick = 59;
     private readonly ContentStore _c;
     private readonly long _seed;
     private readonly Dictionary<(int, int), TileInfo> _cache = new();
@@ -53,6 +53,19 @@ public sealed class WorldGen
         int danger = (int)Math.Floor(Distance(x, y) / Math.Max(1, _c.Num("DangerDistance", 7))) + biome.DangerBonus;
         if (x == 0 && y == 0) danger = 0;
 
+        // Ruineneingang (hat Vorrang vor normalen Orten)
+        DungeonDef? dungeon = null;
+        if (biome.Passable && Distance(x, y) > _c.Int("SafeRadius", 2)
+            && WorldHash.Unit(_seed, x, y, SaltDungeon) < _c.Num("DungeonChance", 0.012))
+        {
+            var candidates = _c.Dungeons.Values
+                .Where(d => d.Entrance is not null && d.Weight > 0 && d.Biomes.AllowsBiome(biome.Key)
+                            && d.MinDanger <= danger && (d.MaxDanger is null || d.MaxDanger >= danger))
+                .OrderBy(d => d.Key, StringComparer.Ordinal).ToList();
+            dungeon = PickWeighted(candidates, d => d.Weight, WorldHash.Unit(_seed, x, y, SaltDungeonPick));
+            if (dungeon is not null) return new TileInfo(x, y, biome, danger, null, dungeon);
+        }
+
         EventDef? poi = null;
         if (biome.Passable && (x != 0 || y != 0) && WorldHash.Unit(_seed, x, y, SaltPoi) < biome.EventChance)
         {
@@ -74,6 +87,19 @@ public sealed class WorldGen
         }
 
         return new TileInfo(x, y, biome, danger, poi);
+    }
+
+    private static T? PickWeighted<T>(List<T> items, Func<T, int> weight, double unit) where T : class
+    {
+        int total = items.Sum(weight);
+        if (total <= 0) return null;
+        double r = unit * total;
+        foreach (var i in items)
+        {
+            r -= weight(i);
+            if (r < 0) return i;
+        }
+        return items[^1];
     }
 
     private BiomeDef PickBiome(double h, double m, bool passableOnly = false)

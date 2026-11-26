@@ -1,0 +1,226 @@
+@page "/admin/ruins/{Key}/story"
+@layout AdminLayout
+@inject ContentAdmin Admin
+@inject ContentStore Content
+@inject NavigationManager Nav
+
+<PageTitle>Storyboard – @(_d?.Name ?? Key)</PageTitle>
+
+@if (_d is null)
+{
+    <p>Ruine „@Key“ gibt es nicht. <a href="/admin/ruins">Zur Übersicht</a></p>
+    return;
+}
+
+<header class="admin-head">
+    <div class="admin-crumbs"><a href="/admin/ruins">Ruinen</a> / <a href="/admin/ruins/@Key">@_d.Name</a> /</div>
+    <h1>Storyboard</h1>
+    <p class="muted">Die Geschichte dieser Ruine in Szenen. Eine Szene erscheint im Spiel als eigenes Textfenster und wird im Journal gesammelt, sobald etwas mit <code>story:KEY</code> sie auslöst: ein Feld (Auslöser), ein Objekt (z. B. beim Öffnen einer Kiste oder nach einem Kampf) oder eine Ereignis-Option.</p>
+</header>
+
+@if (_msg is not null) { <div class="admin-flash @(_bad ? "bad" : "")">@_msg</div> }
+
+<div class="storyboard">
+    @foreach (var (st, idx) in Scenes.Select((s, i) => (s, i)))
+    {
+        var uses = Uses(st.Key);
+        <article class="scene @(uses.Count == 0 ? "unused" : "")">
+            <div class="scene-num">@(idx + 1)</div>
+            <div class="scene-body">
+                <div class="scene-head">
+                    <input class="af-input scene-title" value="@Form(st).Title" @onchange='e => Form(st).Title = e.Value?.ToString() ?? ""' />
+                    <code class="muted">story:@st.Key</code>
+                    <div class="admin-actions">
+                        <button class="btn btn-small" disabled="@(idx == 0)" @onclick="() => Move(st, -1)" title="Nach oben">▲</button>
+                        <button class="btn btn-small" disabled="@(idx == Scenes.Count - 1)" @onclick="() => Move(st, 1)" title="Nach unten">▼</button>
+                    </div>
+                </div>
+                <textarea class="af-input scene-text" rows="4" value="@Form(st).Text" @onchange='e => Form(st).Text = e.Value?.ToString() ?? ""'></textarea>
+                <div class="admin-actions">
+                    <button class="btn btn-small btn-primary" @onclick="() => SaveScene(st)">Speichern</button>
+                    @if (_confirmDelete == st.Key)
+                    {
+                        <button class="btn btn-small btn-danger" @onclick="() => DeleteScene(st)">Wirklich löschen</button>
+                        <button class="btn btn-small" @onclick="() => _confirmDelete = null">Abbrechen</button>
+                    }
+                    else { <button class="btn btn-small btn-ghost" @onclick="() => _confirmDelete = st.Key">Löschen</button> }
+                </div>
+
+                <div class="scene-links">
+                    <span class="scene-label">Ausgelöst durch</span>
+                    @if (uses.Count == 0) { <span class="ruin-err">noch nirgends – die Szene erscheint nie</span> }
+                    @foreach (var u in uses) { <a class="scene-chip" href="@u.Href">@u.Text</a> }
+                </div>
+
+                <details class="scene-connect">
+                    <summary>Verknüpfen …</summary>
+                    <div class="scene-connect-row">
+                        <span>Mit einem Feld:</span>
+                        @foreach (var f in _d.Floors.OrderBy(f => f.SortOrder))
+                        {
+                            <a class="btn btn-small" href="/admin/ruins/@Key/floor/@f.Id?place=@Uri.EscapeDataString("story:" + st.Key)">auf „@f.Name“ wählen</a>
+                        }
+                    </div>
+                    <div class="scene-connect-row">
+                        <span>Mit einem Objekt:</span>
+                        <select class="af-input" @bind="_linkObj">
+                            <option value="0">– Objekt wählen –</option>
+                            @foreach (var o in _d.Floors.SelectMany(f => f.Objects).Where(o => o.Kind is "container" or "door" or "enemy" or "trigger"))
+                            {
+                                <option value="@o.Id">@DungeonKinds.Name(o.Kind): @(o.Label ?? o.EnemyKey ?? o.Effects) (@FloorName(o.FloorId) @o.X,@o.Y)</option>
+                            }
+                        </select>
+                        <button class="btn btn-small" @onclick="() => LinkObject(st)">Verknüpfen</button>
+                    </div>
+                    <div class="scene-connect-row">
+                        <span>Mit einer Ereignis-Option:</span>
+                        <select class="af-input" @bind="_linkOpt">
+                            <option value="0">– Option wählen –</option>
+                            @foreach (var ev in Content.Events.Values.OrderBy(e => e.Kind != "dungeon").ThenBy(e => e.Title))
+                            {
+                                foreach (var op in ev.Options) { <option value="@op.Id">@ev.Title → @op.Label</option> }
+                            }
+                        </select>
+                        <select class="af-input" @bind="_linkOnFail">
+                            <option value="false">bei Erfolg</option>
+                            <option value="true">bei Fehlschlag</option>
+                        </select>
+                        <button class="btn btn-small" @onclick="() => LinkOption(st)">Verknüpfen</button>
+                    </div>
+                </details>
+            </div>
+        </article>
+    }
+</div>
+
+<section class="admin-box">
+    <h2>Neue Szene</h2>
+    <div class="admin-form compact">
+        <label class="af"><span class="af-name">Schlüssel</span><input class="af-input" @bind="_newKey" /></label>
+        <label class="af"><span class="af-name">Überschrift</span><input class="af-input" @bind="_newTitle" /></label>
+    </div>
+    <label class="af"><span class="af-name">Text</span><textarea class="af-input" rows="4" @bind="_newText"></textarea></label>
+    <button class="btn btn-primary" @onclick="AddScene">Szene anlegen</button>
+</section>
+
+@code {
+    [Parameter] public string Key { get; set; } = "";
+    private DungeonDef? _d;
+    private string? _msg, _confirmDelete;
+    private bool _bad, _linkOnFail;
+    private long _linkObj, _linkOpt;
+    private string _newKey = "", _newTitle = "", _newText = "";
+
+    private sealed class SceneForm { public string Title = ""; public string Text = ""; }
+    private readonly Dictionary<string, SceneForm> _forms = new();
+
+    private List<DungeonStoryDef> Scenes => Content.Stories.Values.Where(s => s.DungeonKey == Key).OrderBy(s => s.SortOrder).ThenBy(s => s.Key).ToList();
+
+    protected override void OnParametersSet()
+    {
+        _d = Content.Dungeons.GetValueOrDefault(Key);
+        SuggestKey();
+    }
+
+    private void SuggestKey()
+    {
+        int n = Scenes.Count + 1;
+        while (Content.Stories.ContainsKey($"{Key}_{n}")) n++;
+        _newKey = $"{Key}_{n}";
+    }
+
+    private SceneForm Form(DungeonStoryDef st)
+    {
+        if (!_forms.TryGetValue(st.Key, out var f)) _forms[st.Key] = f = new SceneForm { Title = st.Title, Text = st.Text };
+        return f;
+    }
+
+    private string FloorName(long id) => Content.Floors.GetValueOrDefault(id)?.Name ?? "?";
+
+    private record Use(string Text, string Href);
+
+    private List<Use> Uses(string key)
+    {
+        var tag = "story:" + key;
+        bool Has(string? eff) => (eff ?? "").Split(';', StringSplitOptions.TrimEntries).Contains(tag);
+        var list = new List<Use>();
+        foreach (var f in Content.Floors.Values)
+            foreach (var o in f.Objects.Where(o => Has(o.Effects) || Has(o.FailEffects)))
+                list.Add(new Use($"{DungeonKinds.Name(o.Kind)} {o.Label ?? ""} · {f.Name} {o.X},{o.Y}", $"/admin/ruins/{f.DungeonKey}/floor/{f.Id}?select={o.Id}"));
+        foreach (var ev in Content.Events.Values)
+            foreach (var op in ev.Options.Where(op => Has(op.SuccessEffects) || Has(op.FailEffects)))
+                list.Add(new Use($"Ereignis „{ev.Title}“ → {op.Label}", $"/admin/t/EventOptions/find?key={op.Id}"));
+        return list;
+    }
+
+    private void Flash(string m, bool bad = false) { _msg = m; _bad = bad; }
+
+    private void SaveScene(DungeonStoryDef st)
+    {
+        var f = Form(st);
+        Admin.Update(Admin.Table("DungeonStory")!, RowId(st.Key), new Dictionary<string, object?> { ["Title"] = f.Title, ["Text"] = f.Text });
+        Flash($"Szene „{f.Title}“ gespeichert.");
+    }
+
+    private long RowId(string key) => Admin.RowByKey(Admin.Table("DungeonStory")!, key)!.RowId;
+
+    private void Move(DungeonStoryDef st, int dir)
+    {
+        var list = Scenes;
+        int i = list.FindIndex(s => s.Key == st.Key), j = i + dir;
+        if (j < 0 || j >= list.Count) return;
+        // Reihenfolge neu durchnummerieren und die zwei Szenen tauschen
+        (list[i], list[j]) = (list[j], list[i]);
+        var t = Admin.Table("DungeonStory")!;
+        for (int k = 0; k < list.Count; k++)
+            if (list[k].SortOrder != k + 1)
+                Admin.Update(t, RowId(list[k].Key), new Dictionary<string, object?> { ["SortOrder"] = (long)(k + 1) });
+    }
+
+    private void DeleteScene(DungeonStoryDef st)
+    {
+        Admin.Delete(Admin.Table("DungeonStory")!, RowId(st.Key), cascade: true);
+        _confirmDelete = null;
+        Flash($"Szene gelöscht. Verweise mit story:{st.Key} zeigt die Inhaltsprüfung an.");
+    }
+
+    private void AddScene()
+    {
+        var key = _newKey.Trim().ToLowerInvariant().Replace(' ', '_');
+        if (key == "" || _newTitle.Trim() == "") { Flash("Schlüssel und Überschrift angeben.", bad: true); return; }
+        if (Content.Stories.ContainsKey(key)) { Flash("Diesen Schlüssel gibt es schon.", bad: true); return; }
+        Admin.Insert(Admin.Table("DungeonStory")!, new Dictionary<string, object?>
+        {
+            ["Key"] = key, ["DungeonKey"] = Key, ["Title"] = _newTitle.Trim(), ["Text"] = _newText,
+            ["SortOrder"] = (long)(Scenes.Count == 0 ? 1 : Scenes.Max(s => s.SortOrder) + 1),
+        });
+        _newTitle = ""; _newText = "";
+        SuggestKey();
+        Flash("Szene angelegt. Jetzt noch verknüpfen.");
+    }
+
+    private void LinkObject(DungeonStoryDef st)
+    {
+        var o = Content.Floors.Values.SelectMany(f => f.Objects).FirstOrDefault(o => o.Id == _linkObj);
+        if (o is null) { Flash("Bitte ein Objekt wählen.", bad: true); return; }
+        Admin.Update(Admin.Table("DungeonObjects")!, o.Id, new Dictionary<string, object?>
+        {
+            ["Effects"] = AdminFloorEditor.AppendEffect(o.Effects, "story:" + st.Key),
+        });
+        _linkObj = 0;
+        Flash($"Mit „{o.Label ?? DungeonKinds.Name(o.Kind)}“ verknüpft.");
+    }
+
+    private void LinkOption(DungeonStoryDef st)
+    {
+        var op = Content.Events.Values.SelectMany(e => e.Options).FirstOrDefault(o => o.Id == _linkOpt);
+        if (op is null) { Flash("Bitte eine Option wählen.", bad: true); return; }
+        var col = _linkOnFail ? "FailEffects" : "SuccessEffects";
+        Admin.Update(Admin.Table("EventOptions")!, op.Id, new Dictionary<string, object?>
+        {
+            [col] = AdminFloorEditor.AppendEffect(_linkOnFail ? op.FailEffects : op.SuccessEffects, "story:" + st.Key),
+        });
+        _linkOpt = 0;
+        Flash($"Mit Option „{op.Label}“ verknüpft.");
+    }
+}

@@ -13,6 +13,7 @@ Diese Doku erklärt, wie der Code aufgebaut ist und wo du anfasst, wenn du das S
 7. [Rezepte: typische Erweiterungen](#7-rezepte-typische-erweiterungen)
 7a. [Beispiel einer größeren Erweiterung: Tauschhändler](#7a-beispiel-einer-größeren-erweiterung-tauschhändler)
 7b. [Die Verwaltung](#7b-die-verwaltung)
+7c. [Ruinen](#7c-ruinen)
 8. [Stolperfallen](#8-stolperfallen)
 9. [Testen](#9-testen)
 
@@ -440,6 +441,70 @@ Der Spielstand-Editor schreibt über `SaveStore.Save` und ruft danach `SaveStore
 
 ---
 
+## 7c. Ruinen
+
+Ruinen sind handgebaute Karten, die zufällig auf der Weltkarte auftauchen. Technisch sind sie eine Erweiterung nach dem Muster aus 7a: Die Mechanik steht einmal im Code, jede einzelne Ruine ist reiner Inhalt.
+
+### Datenmodell (content.db)
+
+```
+Dungeons ──< DungeonFloors ──< DungeonObjects >── Enemies / Events / Skills
+   │              (Tiles: Kachel-Keys)        └── TargetFloorId → DungeonFloors (Übergang)
+   └──< DungeonStory          DungeonTiles (Palette: terrain + object)
+```
+
+- **Kartendaten** (`DungeonFloors.Tiles`): Zeilen durch Zeilenumbruch getrennt, Zellen durch Komma, jede Zelle ist ein Key aus `DungeonTiles`. Fehlende Zellen gelten als `void`. Lesen und Schreiben über `DungeonFloorDef.ParseGrid` / `SerializeGrid`.
+- **Startpunkt**: das erste Objekt der Art `entrance` auf dem Stockwerk mit der kleinsten `SortOrder` (`DungeonDef.Entrance`). Ohne Eingang taucht die Ruine nicht auf der Karte auf.
+- **Auf der Weltkarte**: `WorldGen` würfelt pro Feld mit `Settings.DungeonChance`, ob dort ein Eingang liegt, und wählt dann gewichtet eine passende Ruine (Biome, Gefahrenbereich, `Weight`). Ein Ruineneingang ersetzt einen normalen Ort. Im Schutzradius um den Bunker gibt es keine.
+
+### Spielstand (save.db)
+
+| Wo | Was |
+|---|---|
+| `Character.DungeonKey`, `DungeonWX/WY`, `FloorId`, `FX/FY` | Aufenthalt: welche Ruine, an welcher Weltposition sie liegt, welches Stockwerk, welches Feld. `DungeonKey = NULL` heißt Oberwelt. |
+| `DungeonObjectState (WX, WY, ObjectId)` | erledigte Objekte (geöffnet, besiegt, ausgelöst) |
+| `DungeonExplored (WX, WY, FloorId, X, Y)` | aufgedeckte Felder |
+| `FoundStory (StoryKey)` | gefundene Story-Szenen fürs Journal |
+
+Der Fortschritt hängt an der **Weltposition des Eingangs**. Taucht dieselbe Ruine zweimal auf der Karte auf, ist jede Fundstelle eine eigene Instanz mit eigenem Fortschritt. Die neuen Spalten in `Character` rüstet `SaveStore` bei alten Spielständen automatisch nach (Muster aus dem Rezept „Neuer Wert im Spielstand“).
+
+### Ablauf im Spiel (GameService, Abschnitt „Ruinen“)
+
+- **Betreten**: Auf dem Eingangsfeld öffnet sich ein Dialog. Option „Betreten“ hat den Effekt `dungeon:KEY`, `EnterDungeon` setzt die Position.
+- **Bewegen**: `Move` leitet in der Ruine an `DungeonMove` weiter. Objekte der Arten `container`, `door`, `enemy` und `event` **blockieren**: Anlaufen löst sie aus, die Figur bleibt stehen. `exit`, `transition` und `trigger` werden durch Betreten ausgelöst.
+- **Objekte nutzen das Ereignissystem.** `InteractDungeonObject` baut für Behälter, Türen, Gegner und Ausgänge ein Ereignis zur Laufzeit (`Synth(...)`). Eine Kiste mit Probe ist also ein Ereignis mit der Option „Öffnen“ (Probe auf `SkillKey`, Erfolg = `Effects`, Fehlschlag = `FailEffects` + `persist`). Ein Gegner ist ein Ereignis mit „Angreifen“ = `combat:KEY;Effects`. Dadurch funktionieren Proben, Beute, Kämpfe und die Effekt-Warteschlange ohne zusätzlichen Code.
+- **Erledigt markieren**: `ActiveEvent.DungeonObjectId` merkt sich das auslösende Objekt. Wenn die Effekte durchgelaufen sind, markiert `RunEffects` es als erledigt, außer bei `persist`, Flucht oder Tod. Deshalb bleibt eine Kiste nach einer misslungenen Probe zu und lässt sich erneut versuchen.
+- **Story**: Der Effekt `story:KEY` reiht ein Hinweisfenster (`Notice`, Art `story`) ein und merkt die Szene fürs Journal. Ein Auslöser, der nur eine Story zeigt und weder Name noch Beschreibung hat, öffnet keinen eigenen Dialog.
+- **Gefahr**: Gefahrenstufe am Eingang + `DangerOffset` des Stockwerks. Sie gilt für Gegnerstärke, Beute und den Probenmalus (`DungeonContext()`).
+- **Tod** in einer Ruine: Die Figur erwacht im Bunker, `DungeonKey` wird geleert. Erledigte Objekte bleiben erledigt.
+- **Sicherheitsnetz**: Wird ein Stockwerk gelöscht, auf dem die Figur steht, holt `Load` bzw. `DungeonMove` sie an die Oberfläche.
+
+### Editor-Interna (`AdminFloorEditor.razor`)
+
+- Die Karte liegt während der Bearbeitung nur im Speicher (`_grid`) und wird erst mit „Karte speichern“ geschrieben. Ungespeicherte Änderungen schützt `<NavigationLock>`. Rückgängig hält bis zu 60 Schritte.
+- **Objekte** werden dagegen sofort gespeichert, weil jedes eine eigene Zeile in `DungeonObjects` ist. Das Eigenschaftsfeld zeigt je Objektart nur die passenden Spalten (`KindColumns`) und nutzt dafür dieselben Eingabefelder wie der Tabellen-Editor (`AdminField`).
+- **Mausbedienung**: Jede Zelle hat eine unsichtbare Trefferfläche mit `onmousedown`/`onmouseenter`. Gedrückt halten und Ziehen malt.
+- **Automatischer Gang**: Der Pinsel `_auto_corridor` wählt pro Zelle die Gangkachel `corridor_<offene Seiten>` anhand der begehbaren Nachbarn und passt angrenzende Gänge mit an. Malst du später Boden oder Mauer neben einen Gang, richtet er sich ebenfalls neu aus. Türkacheln (`corridor_door_*`) werden nicht automatisch verändert.
+- **Modi über die Adresse**: `?pick=ObjektId` (Zielfeld eines Übergangs wählen, auch auf einem anderen Stockwerk), `?select=ObjektId` (Objekt auswählen), `?place=story:KEY` (aus dem Storyboard: Feld wählen, um die Story zu verknüpfen).
+- **Hier testen**: `SaveStore.PlaceInDungeon` setzt die Figur des aktuellen Spielstands auf das gewählte Feld und meldet die Änderung an offene Spiele.
+
+### Rezept: neue Objektart
+
+Beispiel: ein Brunnen, an dem man einmalig voll heilt.
+
+1. In `DungeonKinds.All` (`Models/DungeonModels.cs`) eintragen: Key, Anzeigename, Standard-Symbol.
+2. Soll er den Weg versperren und durch Anlaufen auslösen? Dann in `DungeonObjectDef.Blocks` aufnehmen.
+3. In `GameService.InteractDungeonObject` (blockierend) bzw. im `switch` in `DungeonMove` (betretbar) das Verhalten einbauen. Meist reicht ein `Synth(...)`-Ereignis mit passenden Effekten, z. B. `heal:full`.
+4. Im Editor: `KindColumns` und `KindHelp` in `AdminFloorEditor.razor` ergänzen, Kurzlabel in `ObjectGlyph.razor`.
+5. In `_ColumnDocs` das `enum:` von `DungeonObjects.Kind` erweitern, damit der Tabellen-Editor die Art anbietet.
+6. Falls nötig, Prüfregeln in `ContentValidator.cs` ergänzen.
+
+### Neue Kacheln
+
+Reiner Inhalt: in der Verwaltung unter „Kachel-Palette“ eine Zeile anlegen (SVG im 48×48-Feld, Layer `terrain` oder `object`, begehbar ja/nein). Die Kachel erscheint sofort in der Editor-Palette. **Kachel-Keys nicht umbenennen**, solange Karten sie benutzen: Die Karten speichern die Keys als Text, und unbekannte Keys meldet die Inhaltsprüfung als Fehler.
+
+---
+
 ## 8. Stolperfallen
 
 **Fest im Code verwendete Schlüssel.** Diese Keys aus der Datenbank werden vom Code direkt angesprochen. Nicht umbenennen oder löschen, sonst funktionieren Teile der Regeln nicht mehr:
@@ -450,7 +515,10 @@ Der Spielstand-Editor schreibt über `SaveStore.Save` und ruft danach `SaveStore
 | Fertigkeiten | `melee`, `ranged`, `healing`, `stealth`, `perception` | Kampf, Heilung, Flucht, Sichtweite |
 | Slots | `melee`, `ranged`, `body`, `head` | Ausrüstung, Kampf, Inventar-Anzeige |
 | Kategorien | `weapon`, `armor`, `consumable`, `ammo` | Inventar, Stapeln, Benutzen |
-| Event-Kinds | `poi`, `encounter` | Weltgenerierung, Begegnungen |
+| Event-Kinds | `poi`, `encounter`, `dungeon` | Weltgenerierung, Begegnungen (`dungeon` erscheint nie auf der Weltkarte) |
+| Ruinen-Objektarten | `entrance`, `exit`, `transition`, `container`, `door`, `enemy`, `event`, `trigger` | Spiellogik der Ruinen, Editor |
+| Kachel-Layer | `terrain`, `object` | Editor-Palette, Darstellung |
+| Gang-Kacheln | `corridor_` + offene Seiten in der Reihenfolge n, e, s, w (z. B. `corridor_esw`) | automatischer Gang-Pinsel im Editor |
 | Biom | Wert von `Settings.StartBiome` (Standard `bunker`) | Startfeld (0,0) |
 
 **Weltgenerierung und bestehende Spielstände.** Die Welt wird bei jedem Laden aus dem Seed neu berechnet. Wenn du Biom-Bereiche, `EventChance`, die Rauschparameter in `WorldGen` oder die Liste der `poi`-Ereignisse änderst, sieht die Welt eines **bestehenden** Spielstands danach anders aus. Erkundete und erledigte Felder bleiben gespeichert, aber Gelände und Orte können sich verschieben. Für Tests egal, für einen laufenden Spielstand ggf. ärgerlich.

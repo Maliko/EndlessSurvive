@@ -48,6 +48,8 @@ INSERT INTO Settings (Key,Value,Description) VALUES ('RestEncounterFactor', '2.5
 INSERT INTO Settings (Key,Value,Description) VALUES ('DeathXpLossPercent', '25', 'Verlust des XP-Fortschritts der aktuellen Stufe beim Tod');
 INSERT INTO Settings (Key,Value,Description) VALUES ('ItemValuePerLevel', '0.25', 'Tauschwert-Zuwachs je Gegenstandsstufe (Faktor)');
 INSERT INTO Settings (Key,Value,Description) VALUES ('StartItems', 'pipe:1;medkit_small:2;rags:1', 'Startausruestung key:Anzahl');
+INSERT INTO Settings (Key,Value,Description) VALUES ('DungeonChance', '0.006', 'Anteil der Felder mit einem Ruineneingang (0–1)');
+INSERT INTO Settings (Key,Value,Description) VALUES ('DungeonSightRadius', '3', 'Sichtweite in Ruinen');
 
 -- Texte: Feste Texte: Titel, Intro, Tod, Stufenaufstieg.
 CREATE TABLE Texts (
@@ -274,6 +276,7 @@ INSERT INTO Events (Key,Title,Text,Kind,Biomes,MinDanger,MaxDanger,Weight,Marker
 INSERT INTO Events (Key,Title,Text,Kind,Biomes,MinDanger,MaxDanger,Weight,Marker) VALUES ('stash', 'Verstecktes Depot', 'Ein loser Stein, darunter ein Hohlraum. Jemand hat hier etwas versteckt.', 'encounter', '*', 0, NULL, 5, '◆');
 INSERT INTO Events (Key,Title,Text,Kind,Biomes,MinDanger,MaxDanger,Weight,Marker) VALUES ('wandering_trader', 'Reisende Haendlerin', 'Ein Handkarren mit Planen, gezogen von einer Frau mit Gasmaske. Sie hebt die Hand – friedlich.', 'encounter', '*', 0, NULL, 6, '⚖');
 INSERT INTO Events (Key,Title,Text,Kind,Biomes,MinDanger,MaxDanger,Weight,Marker) VALUES ('trader_post', 'Handelsposten', 'Ein umgebauter Container mit Gittertuer. Auf einem Schild steht: TAUSCH. KEIN AERGER.', 'poi', 'ruins,scrapyard,wasteland,ashdesert', 1, NULL, 4, '⚖');
+INSERT INTO Events (Key,Title,Text,Kind,Biomes,MinDanger,MaxDanger,Weight,Marker) VALUES ('metro_ticket', 'Fahrkartenautomat', 'Ein Automat der Verkehrsbetriebe. Das Display flackert noch: BITTE ZIEL WÄHLEN.', 'dungeon', '*', 0, NULL, 10, '▤');
 
 -- Ereignis-Optionen: Wahlmöglichkeiten eines Ereignisses, optional mit Probe. Effekte siehe Hilfe am Effekt-Feld.
 CREATE TABLE EventOptions (
@@ -356,6 +359,8 @@ INSERT INTO EventOptions (Id,EventKey,SortOrder,Label,SkillKey,Difficulty,Danger
 INSERT INTO EventOptions (Id,EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES (64, 'trader_post', 1, 'Mit dem Schrotthaendler tauschen', NULL, 0, 0, NULL, 'Er mustert dich und deine Ausruestung.', 'trade:scrapper;persist', NULL, NULL);
 INSERT INTO EventOptions (Id,EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES (65, 'trader_post', 2, 'Mit dem Wanderarzt tauschen', NULL, 0, 0, NULL, 'Der Arzt rueckt seine Brille zurecht.', 'trade:medic;persist', NULL, NULL);
 INSERT INTO EventOptions (Id,EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES (66, 'trader_post', 3, 'Weitergehen', NULL, 0, 0, NULL, 'Der Posten bleibt, wo er ist.', 'persist', NULL, NULL);
+INSERT INTO EventOptions (Id,EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES (68, 'metro_ticket', 1, 'Wartungsmenü aufrufen', 'hacking', 5, 1, NULL, 'Das Menü öffnet sich. Der Drucker rattert.', 'story:metro_4;xp:15', 'FEHLER 0x23. Der Automat schaltet sich ab.', 'xp:3');
+INSERT INTO EventOptions (Id,EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES (69, 'metro_ticket', 2, 'Geldfach aufbrechen', 'athletics', 0, 1, NULL, 'Münzen, wertlos. Aber dahinter klemmt eine Wasserflasche.', 'item:water:1;xp:5', 'Das Fach hält.', '');
 
 -- Händler: Tauschhändler. Werden über den Effekt trade:KEY in Ereignis-Optionen gestartet.
 CREATE TABLE Traders (
@@ -373,6 +378,165 @@ CREATE TABLE Traders (
 INSERT INTO Traders (Key,Name,Greeting,Categories,StockMin,StockMax,PayFactor,PriceFactor,Weight,Color) VALUES ('wanderer', 'Reisende Haendlerin', '"Alles hat seinen Preis, Fremder. Zeig mir, was du hast."', '*', 5, 8, 0.7, 1.2, 10, '#c0a070');
 INSERT INTO Traders (Key,Name,Greeting,Categories,StockMin,StockMax,PayFactor,PriceFactor,Weight,Color) VALUES ('medic', 'Wanderarzt', '"Verbaende, Pillen, Spritzen. Ich nehme alles, was schiesst."', 'consumable,ammo', 4, 6, 0.8, 1.3, 5, '#e04040');
 INSERT INTO Traders (Key,Name,Greeting,Categories,StockMin,StockMax,PayFactor,PriceFactor,Weight,Color) VALUES ('scrapper', 'Schrotthaendler', '"Metall gegen Metall. Und ich sag dir, was es wert ist."', 'weapon,armor', 4, 6, 0.75, 1.25, 6, '#9a5b34');
+
+-- Ruinen: Begehbare Ruinen. Erscheinen zufällig auf der Weltkarte (Settings.DungeonChance). Karten im Ruinen-Editor bearbeiten.
+CREATE TABLE Dungeons (
+    Key         TEXT PRIMARY KEY,
+    Name        TEXT NOT NULL,
+    Description TEXT NOT NULL DEFAULT '',
+    Biomes      TEXT NOT NULL DEFAULT '*',
+    MinDanger   INTEGER NOT NULL DEFAULT 0,
+    MaxDanger   INTEGER,
+    Weight      INTEGER NOT NULL DEFAULT 10,
+    Marker      TEXT NOT NULL DEFAULT '▼',
+    Color       TEXT NOT NULL DEFAULT '#c0503a'
+);
+INSERT INTO Dungeons (Key,Name,Description,Biomes,MinDanger,MaxDanger,Weight,Marker,Color) VALUES ('metro', 'U-Bahn-Station Zentrum', 'Ein eingestürzter Treppenabgang. Auf dem verbogenen Schild ist noch ein „U“ zu erkennen. Von unten weht kalte, abgestandene Luft herauf.', 'ruins,wasteland,ashdesert', 0, NULL, 10, 'U', '#5a9ad0');
+
+-- Stockwerke: Karten der Ruinen. Bearbeitung im Ruinen-Editor.
+CREATE TABLE DungeonFloors (
+    Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    DungeonKey   TEXT NOT NULL REFERENCES Dungeons(Key),
+    Name         TEXT NOT NULL,
+    SortOrder    INTEGER NOT NULL DEFAULT 0,
+    Width        INTEGER NOT NULL,
+    Height       INTEGER NOT NULL,
+    DangerOffset INTEGER NOT NULL DEFAULT 0,
+    Tiles        TEXT NOT NULL                -- Zeilen durch Zeilenumbruch, Zellen durch Komma (Kachel-Keys)
+);
+INSERT INTO DungeonFloors (Id,DungeonKey,Name,SortOrder,Width,Height,DangerOffset,Tiles) VALUES (1, 'metro', 'Bahnsteigebene', 1, 22, 14, 0, 'void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void
+void,wall,wall,wall,wall,wall,wall,wall,wall,void,void,void,void,wall,wall,wall,wall,wall,wall,wall,wall,void
+void,wall,tiles,tiles,tiles,tiles,tiles,tiles,wall,void,void,void,void,wall,floor,floor,floor,floor,floor,floor,wall,void
+void,wall,tiles,tiles,tiles,tiles,tiles,tiles,corridor_ew,corridor_ew,corridor_ew,corridor_ew,corridor_ew,corridor_door_ew,floor,floor,floor,floor,floor,floor,wall,void
+void,wall,tiles,tiles,pillar,tiles,tiles,tiles,wall,void,void,void,void,wall,floor,floor,floor,rubble,floor,floor,wall,void
+void,wall,tiles,tiles,tiles,tiles,tiles,tiles,wall,void,void,void,void,wall,floor,floor,floor,floor,floor,floor,wall,void
+void,wall,wall,wall,corridor_ns,wall,wall,wall,wall,void,void,void,void,wall,wall,wall,corridor_ns,wall,wall,wall,wall,void
+void,void,void,void,corridor_ns,void,void,void,void,void,void,void,void,void,void,void,corridor_ns,void,void,void,void,void
+void,wall,wall,wall,corridor_ns,wall,wall,wall,wall,wall,wall,wall,wall,wall,wall,wall,corridor_ns,wall,wall,wall,wall,void
+void,wall,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,tiles,wall,void
+void,wall,tiles,tiles,pillar,tiles,tiles,tiles,tiles,tiles,pillar,tiles,tiles,tiles,tiles,tiles,pillar,tiles,tiles,tiles,wall,void
+void,wall,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,wall,void
+void,wall,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,tracks,wall,void
+void,wall,wall,wall,wall,wall,rubble,rubble,wall,wall,wall,wall,wall,wall,rubble,rubble,wall,wall,wall,wall,wall,void');
+INSERT INTO DungeonFloors (Id,DungeonKey,Name,SortOrder,Width,Height,DangerOffset,Tiles) VALUES (2, 'metro', 'Wartungstunnel', 2, 18, 12, 1, 'void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void,void
+void,wall,wall,wall,wall,wall,wall,void,void,void,void,void,void,void,void,void,void,void
+void,wall,grate,grate,grate,grate,wall,void,void,void,void,wall,wall,wall,wall,wall,wall,void
+void,wall,grate,grate,grate,grate,corridor_ew,corridor_ew,corridor_ew,corridor_ew,corridor_ew,corridor_ew,floor,floor,floor,floor,wall,void
+void,wall,grate,grate,grate,grate,wall,void,void,void,void,wall,floor,water,water,floor,wall,void
+void,wall,wall,wall,corridor_ns,wall,wall,void,void,void,void,wall,floor,water,water,floor,wall,void
+void,void,void,void,corridor_ns,void,void,void,void,void,void,wall,floor,floor,floor,floor,wall,void
+void,void,void,void,corridor_ns,void,void,void,void,void,void,wall,wall,corridor_ns,wall,wall,wall,void
+void,void,void,wall,corridor_ns,wall,wall,wall,wall,wall,void,void,void,corridor_ns,void,void,void,void
+void,void,void,wall,floor,floor,floor,floor,floor,wall,void,void,void,corridor_ns,void,void,void,void
+void,void,void,wall,floor,floor,floor,floor,floor,corridor_ew,corridor_ew,corridor_ew,corridor_ew,corridor_nw,void,void,void,void
+void,void,void,wall,wall,wall,wall,wall,wall,wall,void,void,void,void,void,void,void,void');
+
+-- Ruinen-Objekte: Ein- und Ausgänge, Übergänge, Behälter, Türen, Gegner, Ereignisse und Auslöser auf einem Stockwerk.
+CREATE TABLE DungeonObjects (
+    Id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    FloorId       INTEGER NOT NULL REFERENCES DungeonFloors(Id),
+    X             INTEGER NOT NULL,
+    Y             INTEGER NOT NULL,
+    Kind          TEXT NOT NULL,              -- entrance, exit, transition, container, door, enemy, event, trigger
+    Icon          TEXT,                       -- Kachel-Key (Layer object)
+    Label         TEXT,
+    Description   TEXT,
+    EnemyKey      TEXT REFERENCES Enemies(Key),
+    EventKey      TEXT REFERENCES Events(Key),
+    SkillKey      TEXT REFERENCES Skills(Key),
+    Difficulty    INTEGER NOT NULL DEFAULT 0,
+    Effects       TEXT,
+    FailEffects   TEXT,
+    TargetFloorId INTEGER REFERENCES DungeonFloors(Id),
+    TargetX       INTEGER,
+    TargetY       INTEGER
+);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (1, 1, 3, 3, 'entrance', NULL, 'Treppenabgang', NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (2, 1, 2, 2, 'exit', 'obj_exit', 'Treppe nach oben', 'Tageslicht fällt durch die Trümmer.', NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (3, 1, 3, 4, 'trigger', NULL, NULL, NULL, NULL, NULL, NULL, 0, 'story:metro_1', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (4, 1, 6, 5, 'container', 'obj_crate', 'Holzkiste', NULL, NULL, NULL, NULL, 0, 'loot:1', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (5, 1, 10, 3, 'enemy', NULL, NULL, 'Eine Ratte, fett vom Müll der Station.', 'rat', NULL, NULL, 0, '', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (6, 1, 13, 3, 'door', 'obj_door', 'Dienstraum', '„NUR FÜR PERSONAL“. Abgeschlossen.', NULL, NULL, 'lockpick', 0, 'xp:10', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (7, 1, 19, 2, 'container', 'obj_locker', 'Spind', 'Ein verbeulter Personalspind.', NULL, NULL, NULL, 0, 'story:metro_3;item:medkit:1;item:ammo9:6', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (8, 1, 15, 5, 'event', 'obj_machine', 'Fahrkartenautomat', NULL, NULL, 'metro_ticket', NULL, 0, NULL, NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (9, 1, 10, 9, 'trigger', NULL, NULL, NULL, NULL, NULL, NULL, 0, 'story:metro_2;xp:5', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (10, 1, 6, 9, 'container', 'obj_corpse', 'Reisender', 'Ein Skelett im Anzug, die Aktentasche noch in der Hand.', NULL, NULL, NULL, 0, 'loot:1;lore', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (11, 1, 14, 10, 'enemy', NULL, NULL, 'Er hat auf dem Bahnsteig gewartet. Er wartet immer noch.', 'ghoul', NULL, NULL, 0, 'loot:1', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (12, 1, 18, 9, 'container', 'obj_chest', 'Werkzeugkiste', 'Ein Zahlenschloss. Vier Ziffern.', NULL, NULL, 'lockpick', -10, 'lootcat:weapon:1;xp:15', 'damage:1-3', NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (13, 1, 19, 12, 'transition', 'obj_ladder', 'Wartungsschacht', 'Eine Leiter führt hinab in den Wartungstunnel.', NULL, NULL, NULL, 0, NULL, NULL, 2, 4, 9);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (14, 2, 4, 9, 'transition', 'obj_ladder', 'Leiter nach oben', NULL, NULL, NULL, NULL, 0, NULL, NULL, 1, 19, 12);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (15, 2, 7, 9, 'container', 'obj_cabinet', 'Werkzeugschrank', NULL, NULL, NULL, NULL, 0, 'item:medkit_small:2;lootcat:armor:1', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (16, 2, 4, 6, 'enemy', NULL, NULL, 'Rote Optik. Sie hat dich gehört.', 'drone', NULL, NULL, 0, 'xp:10', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (17, 2, 3, 3, 'container', 'obj_barrel', 'Fass mit Warnzeichen', 'Die Aufschrift ist abgeblättert.', NULL, NULL, 'perception', 0, 'item:stimpak:1', 'damage:3-6', NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (18, 2, 13, 4, 'trigger', NULL, NULL, NULL, NULL, NULL, NULL, 0, 'story:metro_5;xp:20', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (19, 2, 15, 6, 'container', 'obj_chest', 'Notfallkiste', 'Rotes Kreuz auf grauem Metall.', NULL, NULL, NULL, 0, 'item:medkit:1;loot:2', NULL, NULL, NULL, NULL);
+INSERT INTO DungeonObjects (Id,FloorId,X,Y,Kind,Icon,Label,Description,EnemyKey,EventKey,SkillKey,Difficulty,Effects,FailEffects,TargetFloorId,TargetX,TargetY) VALUES (20, 2, 14, 3, 'enemy', NULL, NULL, 'Etwas regt sich im Wasser.', 'swamper', NULL, NULL, 0, 'loot:1', NULL, NULL, NULL, NULL);
+
+-- Kachel-Palette: Kacheln für Gelände (terrain) und Symbole für Objekte (object), je ein SVG im 48×48-Feld.
+CREATE TABLE DungeonTiles (
+    Key       TEXT PRIMARY KEY,
+    Name      TEXT NOT NULL,
+    Layer     TEXT NOT NULL DEFAULT 'terrain',  -- terrain = Gelaende, object = Symbol fuer Objekte
+    Svg       TEXT NOT NULL,                     -- SVG im 48x48-Feld
+    Passable  INTEGER NOT NULL DEFAULT 1,
+    SortOrder INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('void', 'Nichts (schwarz)', 'terrain', '<rect width="48" height="48" fill="#050505"/>', 0, 0);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('wall', 'Mauer', 'terrain', '<rect width="48" height="48" fill="#2a2826"/><path d="M0 12H48M0 24H48M0 36H48M12 0V12M36 0V12M24 12V24M0 12V24M12 24V36M36 24V36M24 36V48" stroke="#3b3835" stroke-width="1.5"/>', 0, 1);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('floor', 'Betonboden', 'terrain', '<rect width="48" height="48" fill="#3a3631"/><circle cx="12" cy="15" r="1.2" fill="#4a4540"/><circle cx="33" cy="30" r="1" fill="#4a4540"/><path d="M26 8l5 4" stroke="#2c2925"/>', 1, 2);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('tiles', 'Fliesen', 'terrain', '<rect width="48" height="48" fill="#4a4a46"/><path d="M0 16H48M0 32H48M16 0V48M32 0V48" stroke="#3a3a37" stroke-width="1.5"/><path d="M18 18l10 9" stroke="#2f2f2c"/>', 1, 3);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('grate', 'Gitterboden', 'terrain', '<rect width="48" height="48" fill="#1c1c1c"/><path d="M0 6H48M0 18H48M0 30H48M0 42H48M6 0V48M18 0V48M30 0V48M42 0V48" stroke="#4b4f52" stroke-width="2"/>', 1, 4);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('tracks', 'Gleise', 'terrain', '<rect width="48" height="48" fill="#2b2724"/><path d="M0 6H48M0 18H48M0 30H48M0 42H48" stroke="#4a3a2c" stroke-width="4"/><path d="M14 0V48M34 0V48" stroke="#8a8a88" stroke-width="3"/>', 1, 5);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('water', 'Wasser (seicht)', 'terrain', '<rect width="48" height="48" fill="#17303a"/><path d="M4 16q6-4 12 0t12 0t12 0M8 32q6-4 12 0t12 0t12 0" stroke="#2e6070" stroke-width="2" fill="none"/>', 1, 6);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('rubble', 'Schutt (unpassierbar)', 'terrain', '<rect width="48" height="48" fill="#3a3631"/><path d="M4 40l8-14 8 6 6-12 10 8 8 12z" fill="#5a544c"/><path d="M14 18l6-4 4 6z" fill="#6a645b"/>', 0, 7);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('pillar', 'Säule (unpassierbar)', 'terrain', '<rect width="48" height="48" fill="#3a3631"/><rect x="12" y="12" width="24" height="24" fill="#5c5852" stroke="#6e6a63" stroke-width="2"/>', 0, 8);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_ew', 'Gang waagrecht', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11H37 M11 37H37 M0 11H11 M0 37H11 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 20);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_ns', 'Gang senkrecht', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><path d="M11 11V37 M37 11V37 M11 0V11 M37 0V11 M11 37V48 M37 37V48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 21);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_nesw', 'Kreuzung', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 0V11 M37 0V11 M11 37V48 M37 37V48 M0 11H11 M0 37H11 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 22);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_ne', 'Ecke Nord-Ost', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 37H37 M11 11V37 M11 0V11 M37 0V11 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 23);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_nw', 'Ecke Nord-West', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 37H37 M37 11V37 M11 0V11 M37 0V11 M0 11H11 M0 37H11" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 24);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_es', 'Ecke Süd-Ost', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11H37 M11 11V37 M11 37V48 M37 37V48 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 25);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_sw', 'Ecke Süd-West', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11H37 M37 11V37 M11 37V48 M37 37V48 M0 11H11 M0 37H11" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 26);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_new', 'Abzweig ohne Süd', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 37H37 M11 0V11 M37 0V11 M0 11H11 M0 37H11 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 27);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_nes', 'Abzweig ohne West', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11V37 M11 0V11 M37 0V11 M11 37V48 M37 37V48 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 28);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_esw', 'Abzweig ohne Nord', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11H37 M11 37V48 M37 37V48 M0 11H11 M0 37H11 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 29);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_nsw', 'Abzweig ohne Ost', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><path d="M37 11V37 M11 0V11 M37 0V11 M11 37V48 M37 37V48 M0 11H11 M0 37H11" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 30);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_n', 'Sackgasse Nord', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><path d="M11 37H37 M11 11V37 M37 11V37 M11 0V11 M37 0V11" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 31);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_e', 'Sackgasse Ost', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11H37 M11 37H37 M11 11V37 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 32);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_s', 'Sackgasse Süd', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><path d="M11 11H37 M11 11V37 M37 11V37 M11 37V48 M37 37V48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 33);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_w', 'Sackgasse West', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11H37 M11 37H37 M37 11V37 M0 11H11 M0 37H11" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/>', 1, 34);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_door_ew', 'Gang waagrecht mit Tür', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="0" y="11" width="12" height="26" fill="#3a3631"/><rect x="36" y="11" width="12" height="26" fill="#3a3631"/><path d="M11 11H37 M11 37H37 M0 11H11 M0 37H11 M37 11H48 M37 37H48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/><rect x="21" y="11" width="6" height="26" fill="#7a5530" stroke="#3a2610" stroke-width="1.5"/><circle cx="24" cy="24" r="1.3" fill="#e0c070"/>', 1, 40);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('corridor_door_ns', 'Gang senkrecht mit Tür', 'terrain', '<rect width="48" height="48" fill="#070707"/><rect x="11" y="11" width="26" height="26" fill="#3a3631"/><rect x="11" y="36" width="26" height="12" fill="#3a3631"/><rect x="11" y="0" width="26" height="12" fill="#3a3631"/><path d="M11 11V37 M37 11V37 M11 0V11 M37 0V11 M11 37V48 M37 37V48" stroke="#57524b" stroke-width="2.5" fill="none"/><circle cx="20" cy="27" r="1" fill="#4a4540"/><circle cx="29" cy="19" r="1" fill="#4a4540"/><rect x="11" y="21" width="26" height="6" fill="#7a5530" stroke="#3a2610" stroke-width="1.5"/><circle cx="24" cy="24" r="1.3" fill="#e0c070"/>', 1, 41);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_entrance', 'Eingang (Markierung)', 'object', '<circle cx="24" cy="24" r="10" fill="none" stroke="#8cc152" stroke-width="2.5" stroke-dasharray="4 3"/><path d="M24 17v14M18 25l6 6 6-6" stroke="#8cc152" stroke-width="2.5" fill="none"/>', 1, 100);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_exit', 'Ausgang ins Freie', 'object', '<rect x="12" y="8" width="24" height="32" rx="2" fill="#1a2a14" stroke="#8cc152" stroke-width="2.5"/><path d="M24 30V16M18 22l6-6 6 6" stroke="#8cc152" stroke-width="2.5" fill="none"/>', 1, 101);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_stairs_down', 'Treppe abwärts', 'object', '<path d="M8 12h10v8h10v8h12v10H8z" fill="#5c5852"/><path d="M8 12h10v8h10v8h12" stroke="#8a857c" stroke-width="2" fill="none"/><path d="M38 8v10M34 14l4 4 4-4" stroke="#f2b43a" stroke-width="2" fill="none"/>', 1, 102);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_stairs_up', 'Treppe aufwärts', 'object', '<path d="M8 38h10v-8h10v-8h12V10H8z" fill="#5c5852" transform="scale(1,-1) translate(0,-48)"/><path d="M38 18V8M34 12l4-4 4 4" stroke="#f2b43a" stroke-width="2" fill="none"/>', 1, 103);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_ladder', 'Leiter / Schacht', 'object', '<rect x="10" y="10" width="28" height="28" fill="#0a0a0a" stroke="#5c5852" stroke-width="2"/><path d="M17 6v36M31 6v36M17 13h14M17 21h14M17 29h14M17 37h14" stroke="#a09a8e" stroke-width="2.5"/>', 1, 104);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_door', 'Tür (verschlossen)', 'object', '<rect x="10" y="6" width="28" height="36" rx="2" fill="#6a4a28" stroke="#2a1a08" stroke-width="2"/><path d="M24 6v36" stroke="#4a3018" stroke-width="1.5"/><rect x="19" y="21" width="10" height="9" rx="1.5" fill="#c0a040"/><path d="M21 21v-3a3 3 0 016 0v3" stroke="#c0a040" stroke-width="2" fill="none"/>', 1, 105);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_chest', 'Kiste', 'object', '<rect x="8" y="16" width="32" height="22" rx="2" fill="#6a5030" stroke="#2a1a08" stroke-width="2"/><path d="M8 24h32" stroke="#2a1a08" stroke-width="2"/><rect x="21" y="21" width="6" height="7" fill="#d0b050"/>', 1, 106);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_crate', 'Holzkiste', 'object', '<rect x="9" y="11" width="30" height="28" fill="#8a6a3a" stroke="#4a3418" stroke-width="2"/><path d="M9 11l30 28M39 11L9 39" stroke="#4a3418" stroke-width="2"/>', 1, 107);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_locker', 'Spind', 'object', '<rect x="13" y="5" width="22" height="38" rx="1" fill="#4a5a6a" stroke="#22303a" stroke-width="2"/><path d="M24 5v38" stroke="#22303a" stroke-width="1.5"/><path d="M16 10h5M16 13h5M27 10h5M27 13h5" stroke="#22303a" stroke-width="1.5"/>', 1, 108);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_cabinet', 'Schrank', 'object', '<rect x="8" y="10" width="32" height="30" rx="1" fill="#5a4a3a" stroke="#2a2018" stroke-width="2"/><path d="M8 25h32M24 10v30" stroke="#2a2018" stroke-width="1.5"/><circle cx="21" cy="18" r="1.3" fill="#c0a060"/><circle cx="27" cy="18" r="1.3" fill="#c0a060"/>', 1, 109);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_corpse', 'Leiche', 'object', '<ellipse cx="24" cy="30" rx="15" ry="6" fill="#3a2a22"/><circle cx="12" cy="27" r="5" fill="#8a7a6a"/><path d="M16 28h20M20 24l-4-6M28 24l6-5" stroke="#6a5a4a" stroke-width="4" stroke-linecap="round"/>', 1, 110);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_terminal', 'Terminal', 'object', '<rect x="10" y="10" width="28" height="20" rx="2" fill="#1a1e1a" stroke="#5a6a5a" stroke-width="2"/><path d="M14 16h12M14 21h8" stroke="#6ad06a" stroke-width="2"/><rect x="18" y="30" width="12" height="8" fill="#3a3e3a"/>', 1, 111);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_machine', 'Automat', 'object', '<rect x="12" y="6" width="24" height="36" rx="2" fill="#7a2a2a" stroke="#3a1010" stroke-width="2"/><rect x="16" y="10" width="16" height="12" fill="#1a1a1a"/><rect x="19" y="30" width="10" height="5" fill="#1a1a1a"/>', 1, 112);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_note', 'Notiz', 'object', '<path d="M14 10h16l6 6v22H14z" fill="#d8d0b8" stroke="#8a8270" stroke-width="1.5"/><path d="M18 20h14M18 25h14M18 30h9" stroke="#8a8270" stroke-width="1.5"/>', 1, 113);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_mark', 'Hinweis (!)', 'object', '<circle cx="24" cy="24" r="11" fill="rgba(242,180,58,.15)" stroke="#f2b43a" stroke-width="2"/><path d="M24 17v9" stroke="#f2b43a" stroke-width="3"/><circle cx="24" cy="31" r="1.8" fill="#f2b43a"/>', 1, 114);
+INSERT INTO DungeonTiles (Key,Name,Layer,Svg,Passable,SortOrder) VALUES ('obj_barrel', 'Fass', 'object', '<rect x="14" y="10" width="20" height="30" rx="4" fill="#4a6a3a" stroke="#22301a" stroke-width="2"/><path d="M14 18h20M14 32h20" stroke="#22301a" stroke-width="2"/><path d="M20 23l4 4 4-4" stroke="#d0e040" stroke-width="2" fill="none"/>', 1, 115);
+
+-- Storyboard: Story-Texte. Werden über den Effekt story:KEY angezeigt und im Journal gesammelt.
+CREATE TABLE DungeonStory (
+    Key        TEXT PRIMARY KEY,
+    DungeonKey TEXT REFERENCES Dungeons(Key),
+    Title      TEXT NOT NULL,
+    Text       TEXT NOT NULL,
+    SortOrder  INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO DungeonStory (Key,DungeonKey,Title,Text,SortOrder) VALUES ('metro_1', 'metro', 'Die Treppe hinab', 'Die Rolltreppe steht still, seit Jahrzehnten. An der Wand klebt ein Plakat: „Schutzraum Zentrum – Kapazität 2.000 Personen“. Darunter hat jemand mit Kreide geschrieben: „Voll. Geht weiter.“', 1);
+INSERT INTO DungeonStory (Key,DungeonKey,Title,Text,SortOrder) VALUES ('metro_2', 'metro', 'Bahnsteig 3', 'Auf dem Bahnsteig liegen Koffer, Decken, Kinderspielzeug. Hier haben Menschen gewartet. Auf einen Zug, der nie kam – oder auf etwas anderes.', 2);
+INSERT INTO DungeonStory (Key,DungeonKey,Title,Text,SortOrder) VALUES ('metro_3', 'metro', 'Zettel im Spind', '„Schicht 14. Die Lüftung im Wartungstunnel macht wieder Geräusche. Keiner will runter. Ich gehe morgen. Wenn ich nicht zurückkomme: Der Code für die Werkzeugkiste ist 0451.“', 3);
+INSERT INTO DungeonStory (Key,DungeonKey,Title,Text,SortOrder) VALUES ('metro_4', 'metro', 'Fahrplan-Ausdruck', 'Der Automat druckt einen letzten Fahrplan aus. Alle Abfahrten: GESTRICHEN. Nur eine Zeile nicht: „Sonderzug LAZARUS – Gleis 0 – 04:51“.', 4);
+INSERT INTO DungeonStory (Key,DungeonKey,Title,Text,SortOrder) VALUES ('metro_5', 'metro', 'Gleis 0', 'Hinter dem Wasser, wo kein Gleis sein sollte, endet der Tunnel an einer Betonwand. Jemand hat sie zugemauert, von innen. In den Beton geritzt: 23.', 5);
 
 -- Tabellenbeschreibungen: Beschriftung, Gruppe und Listenspalten der Tabellen in der Verwaltung.
 CREATE TABLE _TableDocs (
@@ -396,6 +560,11 @@ INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,Sor
 INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('Traders', 'Händler', 'Händler', 'Tauschhändler. Werden über den Effekt trade:KEY in Ereignis-Optionen gestartet.', 'Key,Name,Color,Categories,PayFactor,PriceFactor', 11);
 INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('_TableDocs', 'Tabellenbeschreibungen', 'Meta', 'Beschriftung, Gruppe und Listenspalten der Tabellen in der Verwaltung.', 'TableName,Label,GroupName,SortOrder', 90);
 INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('_ColumnDocs', 'Spaltenbeschreibungen', 'Meta', 'Hilfetexte und Eingabefeld-Typ jeder Spalte in der Verwaltung.', 'TableName,ColumnName,Editor,Description', 91);
+INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('Dungeons', 'Ruinen', 'Ruinen', 'Begehbare Ruinen. Erscheinen zufällig auf der Weltkarte (Settings.DungeonChance). Karten im Ruinen-Editor bearbeiten.', 'Key,Name,Marker,Biomes,MinDanger,Weight', 12);
+INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('DungeonFloors', 'Stockwerke', 'Ruinen', 'Karten der Ruinen. Bearbeitung im Ruinen-Editor.', 'Id,DungeonKey,Name,SortOrder,Width,Height,DangerOffset', 13);
+INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('DungeonObjects', 'Ruinen-Objekte', 'Ruinen', 'Ein- und Ausgänge, Übergänge, Behälter, Türen, Gegner, Ereignisse und Auslöser auf einem Stockwerk.', 'Id,FloorId,X,Y,Kind,Label', 14);
+INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('DungeonTiles', 'Kachel-Palette', 'Ruinen', 'Kacheln für Gelände (terrain) und Symbole für Objekte (object), je ein SVG im 48×48-Feld.', 'Key,Name,Svg,Layer,Passable,SortOrder', 15);
+INSERT INTO _TableDocs (TableName,Label,GroupName,Description,DisplayColumns,SortOrder) VALUES ('DungeonStory', 'Storyboard', 'Ruinen', 'Story-Texte. Werden über den Effekt story:KEY angezeigt und im Journal gesammelt.', 'Key,DungeonKey,Title,SortOrder', 16);
 
 -- Spaltenbeschreibungen: Hilfetexte und Eingabefeld-Typ jeder Spalte in der Verwaltung.
 CREATE TABLE _ColumnDocs (
@@ -480,7 +649,7 @@ INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Enemi
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'Key', 'Interner Schlüssel', NULL);
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'Title', 'Überschrift', NULL);
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'Text', 'Beschreibung der Situation', 'multiline');
-INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'Kind', 'poi = fester Ort, encounter = zufällige Begegnung', 'enum:poi,encounter');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'Kind', 'poi = fester Ort, encounter = zufällige Begegnung, dungeon = nur in Ruinen', 'enum:poi,encounter,dungeon');
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'Biomes', 'Wo das Ereignis vorkommt', 'biomes');
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'MinDanger', 'Ab Gefahrenstufe', NULL);
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Events', 'MaxDanger', 'Bis Gefahrenstufe (leer = unbegrenzt)', NULL);
@@ -518,3 +687,48 @@ INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('_Colu
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('_ColumnDocs', 'ColumnName', 'Spalte', NULL);
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('_ColumnDocs', 'Description', 'Hilfetext', 'multiline');
 INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('_ColumnDocs', 'Editor', 'Eingabefeld: multiline, bool, color, enum:a,b, ref:Tabelle, biomes, cats, effects, svg:48, svg:64', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonTiles', 'Key', 'Interner Schlüssel', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonTiles', 'Name', 'Anzeigename in der Palette', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonTiles', 'Layer', 'terrain = Gelände, object = Symbol für Objekte', 'enum:terrain,object');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonTiles', 'Svg', 'SVG im 48×48-Feld', 'svg:48');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonTiles', 'Passable', 'Begehbar (nur für Gelände)', 'bool');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonTiles', 'SortOrder', 'Reihenfolge in der Palette', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'Key', 'Interner Schlüssel (für dungeon:KEY)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'Name', 'Anzeigename', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'Description', 'Text am Eingang', 'multiline');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'Biomes', 'Wo die Ruine auf der Weltkarte erscheinen kann', 'biomes');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'MinDanger', 'Ab Gefahrenstufe', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'MaxDanger', 'Bis Gefahrenstufe (leer = unbegrenzt)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'Weight', 'Häufigkeit im Vergleich zu anderen Ruinen', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'Marker', 'Zeichen auf der Weltkarte', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('Dungeons', 'Color', 'Farbe der Markierung', 'color');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'Id', 'Automatische Nummer', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'DungeonKey', 'Zugehörige Ruine', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'Name', 'Name des Stockwerks', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'SortOrder', 'Reihenfolge (das erste Stockwerk mit Eingang ist der Start)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'Width', 'Breite in Kacheln', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'Height', 'Höhe in Kacheln', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'DangerOffset', 'Zusätzliche Gefahrenstufen auf diesem Stockwerk', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonFloors', 'Tiles', 'Kartendaten – im Ruinen-Editor bearbeiten', 'mapdata');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Id', 'Automatische Nummer', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'FloorId', 'Stockwerk', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'X', 'Spalte (0 = links)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Y', 'Zeile (0 = oben)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Kind', 'Art des Objekts', 'enum:entrance,exit,transition,container,door,enemy,event,trigger');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Icon', 'Symbol aus der Kachel-Palette (Layer object)', 'ref:DungeonTiles');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Label', 'Name/Überschrift im Dialog', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Description', 'Beschreibung im Dialog', 'multiline');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'EnemyKey', 'Gegner (nur Art enemy)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'EventKey', 'Ereignis (nur Art event)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'SkillKey', 'Probe zum Öffnen (Behälter/Tür, leer = offen)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Difficulty', 'Modifikator der Probe', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'Effects', 'Inhalt bzw. Wirkung (Behälter, Tür, Auslöser, Gegner nach Sieg)', 'effects');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'FailEffects', 'Wirkung bei misslungener Probe (z. B. Falle). Das Objekt bleibt geschlossen.', 'effects');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'TargetFloorId', 'Ziel-Stockwerk (nur Übergang)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'TargetX', 'Ziel-Spalte', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonObjects', 'TargetY', 'Ziel-Zeile', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonStory', 'Key', 'Schlüssel für story:KEY', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonStory', 'DungeonKey', 'Zugehörige Ruine (leer = allgemein)', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonStory', 'Title', 'Überschrift', NULL);
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonStory', 'Text', 'Text', 'multiline');
+INSERT INTO _ColumnDocs (TableName,ColumnName,Description,Editor) VALUES ('DungeonStory', 'SortOrder', 'Reihenfolge im Storyboard', NULL);

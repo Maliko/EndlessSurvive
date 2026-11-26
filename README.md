@@ -26,6 +26,7 @@ Dann im Browser **http://localhost:5080** öffnen. Die Verwaltung erreichst du u
 | **Welt** | Wird aus einem Seed per Value-Noise berechnet (Höhe × Feuchte → Biom). Die Gefahrenstufe steigt mit der Entfernung zum Bunker, und mit ihr Gegner, Beute und Proben. |
 | **Orte** | Kisten, Terminals, Leichen, Wracks und Lager liegen fest auf der Karte (`?`-Symbole). Jeder Ort bietet mehrere Optionen mit Fertigkeitsproben. |
 | **Begegnungen** | Zufällige Hinterhalte und Wetterereignisse beim Laufen und Rasten |
+| **Ruinen** | Handgebaute, begehbare Ruinen mit eigenen Karten und mehreren Stockwerken. Sie erscheinen zufällig auf der Weltkarte. Drinnen warten Kisten und Schränke mit festgelegtem Inhalt, verschlossene Türen, platzierte Gegner, Ereignisse und Story-Texte, die im Journal gesammelt werden. |
 | **Tauschhandel** | Es gibt keine Währung. Jeder Gegenstand hat einen internen Wert, und ein Tausch gelingt, wenn dein Angebot mindestens so viel wert ist wie deine Forderung. Händler bewerten fremde Ware niedriger und eigene höher. |
 | **Kampf** | Rundenbasiert: Nahkampf, Fernkampf (mit Munition), Heilen, Fliehen. Ausweichen und Rüstung senken den erlittenen Schaden. |
 | **Tod** | Du erwachst wieder im Bunker und verlierst 25 % des EP-Fortschritts der aktuellen Stufe. |
@@ -53,6 +54,8 @@ In der Verwaltung pflegst du alle Inhalte im Browser, ohne SQL:
 | **Inhaltsprüfung** | Findet Fehler, bevor sie im Spiel auffallen: kaputte Verweise, ungültige Effekte, fehlerhafte SVGs, Min > Max, fehlende Schlüssel, die der Code braucht. |
 | **Spielstand** | Charakterwerte, Attribute, Fertigkeiten und Inventar ändern, Infofragmente freischalten, Karte zurücksetzen, Spielstand löschen. Ein offenes Spiel übernimmt die Änderungen sofort. |
 | **Weltvorschau** | Große Kartenansicht für beliebige Seeds, nach Biom oder Gefahrenstufe eingefärbt, mit Biom-Anteilen und Ortsstatistik. Zum Abstimmen der Biom-Einstellungen. |
+| **Ruinen-Editor** | Ruinen anlegen, Stockwerke mit Größe erstellen und die Karte im WYSIWYG-Editor zeichnen (Pinsel, Rechteck, Füllen, Pipette, automatische Gänge, Rückgängig). Objekte setzen: Eingang, Ausgang, Übergänge zwischen Stockwerken, Behälter, Türen, Gegner, Ereignisse, Auslöser. „Hier testen“ setzt deine Spielfigur direkt auf ein Feld. |
+| **Storyboard** | Story-Szenen einer Ruine in Reihenfolge schreiben und mit Feldern, Objekten oder Ereignis-Optionen verknüpfen. Zeigt, wo jede Szene ausgelöst wird. |
 | **Übersicht** | Sicherungen anlegen und wiederherstellen, Inhalte neu laden, `content.sql` schreiben. |
 
 Jede Änderung wirkt **sofort im laufenden Spiel**. Vorher wird `content.db` gesichert (höchstens alle 10 Minuten, die letzten 20 Sicherungen bleiben). Danach wird `content.sql` neu geschrieben. So bleiben beide Dateien synchron, und in git siehst du jede Inhaltsänderung als lesbaren Text-Diff.
@@ -74,6 +77,11 @@ Der Code enthält keine Inhalte, nur Regeln. **Neue Inhalte sind ausschließlich
 | `Biomes` | Geländetypen: Farbe, SVG-Symbol, Rausch-Bereiche, Gefahrenbonus, Ereignis- und Begegnungsrate, passierbar |
 | `Items` | Waffen, Rüstung, Verbrauchsgüter, Munition, mit Seltenheit, Gefahrenbereich, Biomen und Tauschwert (`Value`) |
 | `Traders` | Händler: Begrüßung, Sortiment (Kategorien, Größe), Ankaufs- und Verkaufsfaktor |
+| `Dungeons` | Ruinen: Name, Eingangstext, Biome, Gefahrenbereich, Häufigkeit, Markierung |
+| `DungeonFloors` | Stockwerke mit Größe und Kartendaten (am besten im Ruinen-Editor bearbeiten) |
+| `DungeonObjects` | Objekte auf den Stockwerken: Ein-/Ausgänge, Übergänge, Behälter, Türen, Gegner, Ereignisse, Auslöser |
+| `DungeonTiles` | Kachel-Palette: SVGs für Gelände (begehbar oder nicht) und Symbole für Objekte |
+| `DungeonStory` | Story-Szenen (Storyboard) |
 | `Enemies` | Gegner mit Basiswerten, SVG-Icon, Gefahrenbereich und Biomen |
 | `Events` + `EventOptions` | Orte (`poi`) und Begegnungen (`encounter`) mit Optionen, Proben und Effekten |
 | `Lore` | Infofragmente fürs Journal |
@@ -93,7 +101,10 @@ combat:KEY       Kampf gegen bestimmten Gegner, combat:* = passender Zufallsgegn
 lore             zufälliges neues Infofragment
 reveal:R         Karte im Radius R aufdecken
 trade:KEY        Tauschhandel mit Händler KEY, trade:* = zufälliger Händler
-persist          Ort bleibt auf der Karte (z. B. für "Später wiederkommen")
+persist          Ort bzw. Objekt bleibt bestehen (z. B. für "Später wiederkommen")
+story:KEY        Story-Szene anzeigen und ins Journal aufnehmen
+dungeon:KEY      Ruine KEY betreten
+exit             Ruine verlassen
 ```
 
 Beispiel für ein neues Ereignis:
@@ -120,9 +131,10 @@ EndlessSurvive/
     GameService.cs     Spielregeln: Proben, Ereignisse, Effekte, Kampf, Stufen
     SaveStore.cs       Spielstand in save.db
     Admin/             Verwaltung: Tabellen-Editor, Inhaltsprüfung, Effekt-Katalog
+  Models/DungeonModels.cs   Ruinen: Stockwerke, Objekte, Kacheln, Story
   Components/
     Pages/             Titelbildschirm, Charaktererstellung, Spiel
-    Pages/Admin/       Seiten der Verwaltung
+    Pages/Admin/       Seiten der Verwaltung, Ruinen-Editor und Storyboard
     Game/              Karte, Dialoge, Charakter, Inventar, Journal, Log
     Admin/             Layout und Eingabefelder der Verwaltung
   wwwroot/             app.css, game.js (Tastatur)

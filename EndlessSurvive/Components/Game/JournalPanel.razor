@@ -5,6 +5,24 @@
     var found = Game.Content.Lore.Where(l => s.FoundLore.Contains(l.Id)).ToList();
 }
 <div class="panel journal-panel">
+    @{
+        var stories = Game.Content.Stories.Values.Where(st => s.FoundStories.Contains(st.Key)).ToList();
+    }
+    @if (stories.Count > 0)
+    {
+        <h3>Aufzeichnungen aus Ruinen <span class="muted">@stories.Count</span></h3>
+        @foreach (var g in stories.GroupBy(st => st.DungeonKey))
+        {
+            <div class="story-group">@(g.Key is not null && Game.Content.Dungeons.TryGetValue(g.Key, out var dg) ? dg.Name : "Allgemein")</div>
+            @foreach (var st in g.OrderBy(x => x.SortOrder))
+            {
+                <article class="lore story">
+                    <h4>@st.Title</h4>
+                    <p>@st.Text</p>
+                </article>
+            }
+        }
+    }
     <h3>Infofragmente <span class="muted">@found.Count / @Game.Content.Lore.Count</span></h3>
     @if (found.Count == 0)
     {

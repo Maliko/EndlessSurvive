@@ -21,6 +21,14 @@ public sealed class CharacterState
     public int Kills { get; set; }
     public int MaxDanger { get; set; }
     public string CreatedAt { get; set; } = "";
+
+    // Aufenthalt in einer Ruine (DungeonKey null = Oberwelt)
+    public string? DungeonKey { get; set; }
+    public int DungeonWX { get; set; }
+    public int DungeonWY { get; set; }
+    public long FloorId { get; set; }
+    public int FX { get; set; }
+    public int FY { get; set; }
 }
 
 public sealed class InventoryItem
@@ -49,10 +57,38 @@ public sealed class GameState
     public HashSet<long> FoundLore { get; } = new();
     public List<LogEntry> Log { get; } = new();
 
+    /// <summary>Erledigte Ruinen-Objekte je Ruine (Weltposition des Eingangs + Objekt-Id).</summary>
+    public HashSet<(int WX, int WY, long ObjectId)> UsedObjects { get; } = new();
+    /// <summary>Erkundete Felder in Ruinen.</summary>
+    public HashSet<(int WX, int WY, long FloorId, int X, int Y)> DungeonExplored { get; } = new();
+    public HashSet<string> FoundStories { get; } = new();
+
     // Aenderungsverfolgung fuer inkrementelles Speichern
     public HashSet<(int X, int Y)> DirtyTiles { get; } = new();
     public HashSet<long> NewLore { get; } = new();
     public List<LogEntry> NewLog { get; } = new();
+    public HashSet<(int WX, int WY, long ObjectId)> NewUsedObjects { get; } = new();
+    public HashSet<(int WX, int WY, long FloorId, int X, int Y)> NewDungeonExplored { get; } = new();
+    public HashSet<string> NewStories { get; } = new();
+
+    public bool InDungeon => Char.DungeonKey is not null;
+
+    public bool IsUsed(long objectId) => UsedObjects.Contains((Char.DungeonWX, Char.DungeonWY, objectId));
+
+    public void MarkUsed(long objectId)
+    {
+        var k = (Char.DungeonWX, Char.DungeonWY, objectId);
+        if (UsedObjects.Add(k)) NewUsedObjects.Add(k);
+    }
+
+    public bool IsExploredInDungeon(int x, int y) =>
+        DungeonExplored.Contains((Char.DungeonWX, Char.DungeonWY, Char.FloorId, x, y));
+
+    public void ExploreInDungeon(int x, int y)
+    {
+        var k = (Char.DungeonWX, Char.DungeonWY, Char.FloorId, x, y);
+        if (DungeonExplored.Add(k)) NewDungeonExplored.Add(k);
+    }
 
     public TileFlags TileState(int x, int y) => Tiles.TryGetValue((x, y), out var f) ? f : TileFlags.None;
 
@@ -96,6 +132,8 @@ public sealed class ActiveEvent
     public string? ResultText { get; set; }
     public List<string> ResultLines { get; } = new();
     public bool Finished { get; set; }
+    /// <summary>Ruinen-Objekt, das dieses Ereignis ausgeloest hat (wird danach als erledigt markiert).</summary>
+    public long? DungeonObjectId { get; init; }
 }
 
 public sealed class Enemy

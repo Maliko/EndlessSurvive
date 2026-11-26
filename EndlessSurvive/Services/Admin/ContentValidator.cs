@@ -1,3 +1,4 @@
+using EndlessSurvive.Models;
 using System.Xml.Linq;
 
 namespace EndlessSurvive.Services.Admin;
@@ -96,7 +97,7 @@ public sealed class ContentValidator(ContentStore c)
         // ----- Ereignisse -----
         foreach (var ev in c.Events.Values)
         {
-            if (ev.Kind is not ("poi" or "encounter")) Err("Events", ev.Key, $"Kind muss poi oder encounter sein, nicht „{ev.Kind}“");
+            if (ev.Kind is not ("poi" or "encounter" or "dungeon")) Err("Events", ev.Key, $"Kind muss poi, encounter oder dungeon sein, nicht „{ev.Kind}“");
             if (ev.Options.Count == 0) Err("Events", ev.Key, "Ereignis hat keine Optionen – der Dialog ließe sich nicht schließen");
             else if (ev.Options.All(o => !string.IsNullOrEmpty(o.RequiresItem))) Err("Events", ev.Key, "Alle Optionen benötigen einen Gegenstand – ohne ihn steckt man fest");
             if (ev.Options.Count > 9) Warn("Events", ev.Key, "Mehr als 9 Optionen – nicht alle per Taste wählbar");
@@ -126,6 +127,77 @@ public sealed class ContentValidator(ContentStore c)
                 foreach (var cat in t.Categories.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                     if (!EffectCatalog.Categories.Contains(cat) && !EffectCatalog.Slots.Contains(cat))
                         Err("Traders", t.Key, $"Unbekannte Kategorie „{cat}“");
+        }
+
+        // ----- Ruinen -----
+        foreach (var t in c.DungeonTiles.Values)
+        {
+            if (t.Layer is not ("terrain" or "object")) Err("DungeonTiles", t.Key, $"Layer muss terrain oder object sein, nicht „{t.Layer}“");
+            CheckSvg("DungeonTiles", t.Key, "Svg", t.Svg);
+        }
+        var storyRefs = new HashSet<string>();
+        void CollectStories(string? effects)
+        {
+            foreach (var e in (effects ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (e.StartsWith("story:")) storyRefs.Add(e[6..]);
+        }
+        foreach (var ev in c.Events.Values) foreach (var o in ev.Options) { CollectStories(o.SuccessEffects); CollectStories(o.FailEffects); }
+
+        foreach (var d in c.Dungeons.Values)
+        {
+            CheckBiomes("Dungeons", d.Key, d.Biomes);
+            if (d.Floors.Count == 0) { Err("Dungeons", d.Key, "Ruine hat keine Stockwerke"); continue; }
+            if (d.Entrance is null) Err("Dungeons", d.Key, "Kein Eingang (Objekt der Art entrance) – die Ruine erscheint nicht auf der Karte");
+            if (!d.Floors.Any(f => f.Objects.Any(o => o.Kind == "exit")))
+                Err("Dungeons", d.Key, "Kein Ausgang (Objekt der Art exit) – man käme nicht mehr hinaus");
+            if (d.MaxDanger is not null && d.MaxDanger < d.MinDanger) Err("Dungeons", d.Key, "MaxDanger ist kleiner als MinDanger");
+        }
+        foreach (var f in c.Floors.Values)
+        {
+            var fk = f.Id.ToString();
+            if (!c.Dungeons.ContainsKey(f.DungeonKey)) Err("DungeonFloors", fk, $"Ruine „{f.DungeonKey}“ existiert nicht");
+            if (f.Width < 1 || f.Height < 1) { Err("DungeonFloors", fk, "Breite und Höhe müssen mindestens 1 sein"); continue; }
+            var rows = f.Tiles.Replace("\r", "").Split('\n');
+            if (rows.Length != f.Height || rows.Any(r => r.Split(',').Length != f.Width))
+                Warn("DungeonFloors", fk, $"„{f.Name}“: Kartendaten passen nicht zu {f.Width}×{f.Height} (fehlende Felder gelten als void)");
+            var unknown = new HashSet<string>();
+            for (int y = 0; y < f.Height; y++)
+                for (int x = 0; x < f.Width; x++)
+                    if (!c.DungeonTiles.ContainsKey(f.TileAt(x, y))) unknown.Add(f.TileAt(x, y));
+            foreach (var u in unknown) Err("DungeonFloors", fk, $"„{f.Name}“: unbekannte Kachel „{u}“");
+
+            foreach (var g in f.Objects.GroupBy(o => (o.X, o.Y)).Where(g => g.Count() > 1))
+                Err("DungeonFloors", fk, $"„{f.Name}“: mehrere Objekte auf Feld {g.Key.X},{g.Key.Y}");
+            foreach (var o in f.Objects)
+            {
+                var ok = o.Id.ToString();
+                var where = $"{f.Name} {o.X},{o.Y}";
+                CollectStories(o.Effects); CollectStories(o.FailEffects);
+                if (DungeonKinds.All.All(k => k.Key != o.Kind)) Err("DungeonObjects", ok, $"{where}: unbekannte Art „{o.Kind}“");
+                if (o.X < 0 || o.Y < 0 || o.X >= f.Width || o.Y >= f.Height) { Err("DungeonObjects", ok, $"{where}: liegt außerhalb der Karte"); continue; }
+                bool passable = c.DungeonTiles.TryGetValue(f.TileAt(o.X, o.Y), out var tile) && tile.Passable;
+                if (!passable && !o.Blocks) Err("DungeonObjects", ok, $"{where}: steht auf unbegehbarer Kachel und ist nicht erreichbar");
+                if (o.Icon is not null && (!c.DungeonTiles.TryGetValue(o.Icon, out var icon) || icon.Layer != "object"))
+                    Warn("DungeonObjects", ok, $"{where}: Symbol „{o.Icon}“ ist keine Objekt-Kachel");
+                if (o.Kind == "enemy" && o.EnemyKey is null) Warn("DungeonObjects", ok, $"{where}: Gegner ohne EnemyKey – es wird ein zufälliger gewählt");
+                if (o.Kind == "event" && (o.EventKey is null || !c.Events.ContainsKey(o.EventKey))) Err("DungeonObjects", ok, $"{where}: Ereignis fehlt");
+                if (o.Kind == "transition")
+                {
+                    if (o.TargetFloorId is not long tf || !c.Floors.TryGetValue(tf, out var target))
+                        Err("DungeonObjects", ok, $"{where}: Übergang ohne gültiges Ziel-Stockwerk");
+                    else if (o.TargetX is not int tx || o.TargetY is not int ty || tx < 0 || ty < 0 || tx >= target.Width || ty >= target.Height)
+                        Err("DungeonObjects", ok, $"{where}: Zielfeld liegt außerhalb von „{target.Name}“");
+                    else if (!(c.DungeonTiles.TryGetValue(target.TileAt(tx, ty), out var tt) && tt.Passable))
+                        Err("DungeonObjects", ok, $"{where}: Zielfeld in „{target.Name}“ ist nicht begehbar");
+                }
+                foreach (var m in EffectCatalog.Validate(o.Effects, c)) Err("DungeonObjects", ok, $"{where}, Effekte: {m}");
+                foreach (var m in EffectCatalog.Validate(o.FailEffects, c)) Err("DungeonObjects", ok, $"{where}, Fehlschlag: {m}");
+            }
+        }
+        foreach (var st in c.Stories.Values)
+        {
+            if (st.DungeonKey is not null && !c.Dungeons.ContainsKey(st.DungeonKey)) Err("DungeonStory", st.Key, $"Ruine „{st.DungeonKey}“ existiert nicht");
+            if (!storyRefs.Contains(st.Key)) Warn("DungeonStory", st.Key, $"Story „{st.Title}“ wird nirgends verwendet (story:{st.Key})");
         }
 
         // ----- Lore -----

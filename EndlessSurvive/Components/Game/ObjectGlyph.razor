@@ -1,0 +1,59 @@
+@inject ContentStore Content
+@* Zeichnet ein Ruinen-Objekt in ein 48x48-Feld (Spiel und Editor). *@
+
+@if (Editor || ShowInGame)
+{
+    var icon = IconSvg;
+    if (Obj.Kind == "enemy" && Enemy is { } e)
+    {
+        <circle cx="24" cy="24" r="21" fill="rgba(120,20,10,.35)" stroke="#e0533a" stroke-width="2" />
+        <svg x="5" y="5" width="38" height="38" viewBox="0 0 64 64" style="color:@e.Color">@((MarkupString)(e.Icon ?? ""))</svg>
+    }
+    else if (icon is not null)
+    {
+        <g opacity="@(Used && !Editor ? ".35" : "1")">@((MarkupString)icon)</g>
+    }
+    else if (Editor)
+    {
+        <circle cx="24" cy="24" r="9" fill="none" stroke="#f2b43a" stroke-width="2" stroke-dasharray="3 3" />
+    }
+    @if (Editor)
+    {
+        <g>
+            <rect x="1" y="1" width="18" height="12" rx="2" fill="rgba(0,0,0,.75)" />
+            <text x="10" y="10" class="obj-kind">@Short</text>
+        </g>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public DungeonObjectDef Obj { get; set; } = default!;
+    [Parameter] public bool Used { get; set; }
+    [Parameter] public bool Editor { get; set; }
+
+    private EnemyDef? Enemy => Obj.EnemyKey is not null ? Content.Enemies.GetValueOrDefault(Obj.EnemyKey) : null;
+
+    private string? IconSvg
+    {
+        get
+        {
+            var key = Obj.Icon ?? DungeonKinds.All.FirstOrDefault(k => k.Key == Obj.Kind).DefaultIcon;
+            if (Editor && key is null && Obj.Kind == "entrance") key = "obj_entrance";
+            return key is not null && Content.DungeonTiles.TryGetValue(key, out var t) ? t.Svg : null;
+        }
+    }
+
+    /// <summary>Im Spiel sichtbar? Eingaenge nie, erledigte Gegner/Tueren/Ausloeser nicht mehr.</summary>
+    private bool ShowInGame => Obj.Kind switch
+    {
+        "entrance" => false,
+        "enemy" or "door" or "trigger" => !Used,
+        _ => true,
+    };
+
+    private string Short => Obj.Kind switch
+    {
+        "entrance" => "EIN", "exit" => "AUS", "transition" => "ÜBG", "container" => "BEH",
+        "door" => "TÜR", "enemy" => "GEG", "event" => "EVT", "trigger" => "TRG", _ => "?",
+    };
+}
