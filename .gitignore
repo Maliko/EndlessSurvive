@@ -5,3 +5,5 @@ obj/
 EndlessSurvive/Data/save.db
 EndlessSurvive/Data/save.db-*
 EndlessSurvive/Data/content.db-*
+bot-playtest.png
+node_modules/

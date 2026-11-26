@@ -80,6 +80,10 @@ INSERT INTO EventOptions (EventKey,SortOrder,Label,SkillKey,Difficulty,DangerSca
 VALUES ('gas_station',1,'Kasse knacken','lockpick',0,1,NULL,'Klick.','loot:2;xp:15','Verklemmt.','xp:2');
 ```
 
+## Weiterentwickeln
+
+Aufbau des Codes, Formeln, Erweiterungsrezepte und Stolperfallen stehen in der **[Entwicklerdoku](docs/ENTWICKLUNG.md)**.
+
 ## Projektstruktur
 
 ```
