@@ -80,11 +80,11 @@
         {
             var (mn, mx) = Game.ItemDamage(it);
             var ammo = d.AmmoKey is not null && Game.Content.Items.TryGetValue(d.AmmoKey, out var a) ? $" · {a.Name}: {Game.Count(a.Key)}" : "";
-            return $"Schaden {mn}–{mx}{ammo}";
+            return $"Schaden {mn}–{mx}{ammo} · Wert {Game.ItemValue(it)}";
         }
-        if (d.IsArmor) return $"Ruestung {Game.ItemArmor(it)}";
-        if (d.IsConsumable) return $"Heilt {d.HealMin}–{d.HealMax} LP";
-        if (d.Category == "ammo") return "Munition";
+        if (d.IsArmor) return $"Ruestung {Game.ItemArmor(it)} · Wert {Game.ItemValue(it)}";
+        if (d.IsConsumable) return $"Heilt {d.HealMin}–{d.HealMax} LP · Wert {Game.ItemValue(it)}";
+        if (d.Category == "ammo") return $"Munition · Wert {Game.ItemValue(it)}";
         return "";
     }
 

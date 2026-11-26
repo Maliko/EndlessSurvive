@@ -80,6 +80,10 @@
         {
             <CombatDialog />
         }
+        else if (Game.Trade is not null)
+        {
+            <TradeDialog />
+        }
         else if (Game.Event is not null)
         {
             <EventDialog />
@@ -147,6 +151,11 @@
             else if (digit == 1) Game.CombatAttack(false);
             else if (digit == 2) Game.CombatAttack(true);
             else if (digit == 3) Game.CombatFlee();
+        }
+        else if (Game.Trade is not null)
+        {
+            if (k == "Enter") Game.ExecuteTrade();
+            else if (k == "Escape") Game.EndTrade();
         }
         else if (Game.Event is { } ev)
         {

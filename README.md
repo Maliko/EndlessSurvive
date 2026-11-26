@@ -26,6 +26,7 @@ Dann im Browser **http://localhost:5080** öffnen.
 | **Welt** | Wird aus einem Seed per Value-Noise berechnet (Höhe × Feuchte → Biom). Die Gefahrenstufe steigt mit der Entfernung zum Bunker, und mit ihr Gegner, Beute und Proben. |
 | **Orte** | Kisten, Terminals, Leichen, Wracks und Lager liegen fest auf der Karte (`?`-Symbole). Jeder Ort bietet mehrere Optionen mit Fertigkeitsproben. |
 | **Begegnungen** | Zufällige Hinterhalte und Wetterereignisse beim Laufen und Rasten |
+| **Tauschhandel** | Es gibt keine Währung. Jeder Gegenstand hat einen internen Wert, und ein Tausch gelingt, wenn dein Angebot mindestens so viel wert ist wie deine Forderung. Händler bewerten fremde Ware niedriger und eigene höher. |
 | **Kampf** | Rundenbasiert: Nahkampf, Fernkampf (mit Munition), Heilen, Fliehen. Ausweichen und Rüstung senken den erlittenen Schaden. |
 | **Tod** | Du erwachst wieder im Bunker und verlierst 25 % des EP-Fortschritts der aktuellen Stufe. |
 
@@ -51,7 +52,8 @@ Der Code enthält keine Inhalte, nur Regeln. **Neue Inhalte sind ausschließlich
 | `Texts` | Intro, Todestext, Titel |
 | `Attributes`, `Skills` | Attribute und Fertigkeiten (mit Leitattribut) |
 | `Biomes` | Geländetypen: Farbe, SVG-Symbol, Rausch-Bereiche, Gefahrenbonus, Ereignis- und Begegnungsrate, passierbar |
-| `Items` | Waffen, Rüstung, Verbrauchsgüter, Munition, mit Seltenheit, Gefahrenbereich und Biomen |
+| `Items` | Waffen, Rüstung, Verbrauchsgüter, Munition, mit Seltenheit, Gefahrenbereich, Biomen und Tauschwert (`Value`) |
+| `Traders` | Händler: Begrüßung, Sortiment (Kategorien, Größe), Ankaufs- und Verkaufsfaktor |
 | `Enemies` | Gegner mit Basiswerten, SVG-Icon, Gefahrenbereich und Biomen |
 | `Events` + `EventOptions` | Orte (`poi`) und Begegnungen (`encounter`) mit Optionen, Proben und Effekten |
 | `Lore` | Infofragmente fürs Journal |
@@ -69,6 +71,7 @@ damage:A-B       Schaden (skaliert mit Gefahrenstufe)
 combat:KEY       Kampf gegen bestimmten Gegner, combat:* = passender Zufallsgegner
 lore             zufälliges neues Infofragment
 reveal:R         Karte im Radius R aufdecken
+trade:KEY        Tauschhandel mit Händler KEY, trade:* = zufälliger Händler
 persist          Ort bleibt auf der Karte (z. B. für "Später wiederkommen")
 ```
 

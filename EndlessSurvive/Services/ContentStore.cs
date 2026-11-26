@@ -20,6 +20,7 @@ public sealed class ContentStore
     public IReadOnlyDictionary<string, EnemyDef> Enemies { get; private set; } = new Dictionary<string, EnemyDef>();
     public IReadOnlyDictionary<string, EventDef> Events { get; private set; } = new Dictionary<string, EventDef>();
     public IReadOnlyList<LoreDef> Lore { get; private set; } = [];
+    public IReadOnlyDictionary<string, TraderDef> Traders { get; private set; } = new Dictionary<string, TraderDef>();
 
     public string DbPath { get; }
 
@@ -55,6 +56,7 @@ public sealed class ContentStore
             if (events.TryGetValue(o.EventKey, out var ev)) ev.Options.Add(o);
         Events = events;
         Lore = c.Query<LoreDef>("SELECT * FROM Lore ORDER BY MinDanger, Id").ToList();
+        Traders = c.Query<TraderDef>("SELECT * FROM Traders").ToDictionary(t => t.Key);
     }
 
     public double Num(string key, double fallback = 0) =>

@@ -49,6 +49,7 @@ INSERT INTO Settings VALUES
  ('SafeRadius',           '2',    'Radius um den Bunker ohne unpassierbares Gelaende und Begegnungen'),
  ('RestEncounterFactor',  '2.5',  'Begegnungsrisiko beim Rasten im Freien (Faktor auf Biom-Wert)'),
  ('DeathXpLossPercent',   '25',   'Verlust des XP-Fortschritts der aktuellen Stufe beim Tod'),
+ ('ItemValuePerLevel',    '0.25', 'Tauschwert-Zuwachs je Gegenstandsstufe (Faktor)'),
  ('StartItems',           'pipe:1;medkit_small:2;rags:1', 'Startausruestung key:Anzahl');
 
 -- ---------------------------------------------------------------------
@@ -170,6 +171,7 @@ INSERT INTO Biomes VALUES
 -- Category: weapon | armor | consumable | ammo
 -- Slot: melee | ranged | body | head (nur bei weapon/armor)
 -- Scales=1: Gegenstand erhaelt beim Fund eine Stufe = Gefahrenstufe
+-- Value: interner Tauschwert pro Stueck bei Stufe 0 (0 = wertlos)
 -- Biomes: '*' = ueberall, sonst kommagetrennte Biom-Keys
 -- ---------------------------------------------------------------------
 CREATE TABLE Items (
@@ -190,10 +192,11 @@ CREATE TABLE Items (
     MaxDanger   INTEGER,
     Biomes      TEXT NOT NULL DEFAULT '*',
     Scales      INTEGER NOT NULL DEFAULT 0,
-    Color       TEXT NOT NULL DEFAULT '#cccccc'
+    Color       TEXT NOT NULL DEFAULT '#cccccc',
+    Value       INTEGER NOT NULL DEFAULT 0   -- interner Tauschwert (Stufe 0)
 );
 
-INSERT INTO Items VALUES
+INSERT INTO Items (Key,Name,Description,Category,Slot,SkillKey,DamageMin,DamageMax,Armor,HealMin,HealMax,AmmoKey,Rarity,MinDanger,MaxDanger,Biomes,Scales,Color) VALUES
  -- Nahkampf
  ('pipe',      'Bleirohr',      'Schwer, verbogen, verlaesslich.',  'weapon','melee','melee', 2,5, 0, 0,0, NULL, 12, 0, 4,  '*',1,'#b0b4ba'),
  ('knife',     'Kampfmesser',   'Rostige Klinge mit Profil.',       'weapon','melee','melee', 3,5, 0, 0,0, NULL, 10, 0, 6,  '*',1,'#d0d4da'),
@@ -227,6 +230,36 @@ INSERT INTO Items VALUES
  ('cannedfood','Konservendose', 'Bohnen. Ablaufdatum: egal.',       'consumable',NULL,NULL,0,0,0, 3,6,  NULL, 14, 0, NULL,'*',0,'#c0a040'),
  ('water',     'Gefiltertes Wasser','Fast klar.',                   'consumable',NULL,NULL,0,0,0, 2,5,  NULL, 12, 0, NULL,'*',0,'#60a0e0'),
  ('mutfruit',  'Mutantenfrucht','Leuchtet leicht. Schmeckt suess.', 'consumable',NULL,NULL,0,0,0, 4,12, NULL, 8, 1, NULL,'swamp,deadforest',0,'#a0e040');
+
+-- Tauschwerte
+UPDATE Items SET Value =   8 WHERE Key = 'pipe';
+UPDATE Items SET Value =  10 WHERE Key = 'knife';
+UPDATE Items SET Value =  18 WHERE Key = 'machete';
+UPDATE Items SET Value =  24 WHERE Key = 'sledge';
+UPDATE Items SET Value =  16 WHERE Key = 'rebarclub';
+UPDATE Items SET Value =  60 WHERE Key = 'chainblade';
+UPDATE Items SET Value =   8 WHERE Key = 'slingshot';
+UPDATE Items SET Value =  20 WHERE Key = 'bow';
+UPDATE Items SET Value =  35 WHERE Key = 'pistol';
+UPDATE Items SET Value =  50 WHERE Key = 'shotgun';
+UPDATE Items SET Value =  65 WHERE Key = 'rifle';
+UPDATE Items SET Value =   1 WHERE Key = 'arrows';
+UPDATE Items SET Value =   2 WHERE Key = 'ammo9';
+UPDATE Items SET Value =   3 WHERE Key = 'shells';
+UPDATE Items SET Value =   4 WHERE Key = 'ammo762';
+UPDATE Items SET Value =   3 WHERE Key = 'rags';
+UPDATE Items SET Value =  15 WHERE Key = 'leather';
+UPDATE Items SET Value =  30 WHERE Key = 'scrapmail';
+UPDATE Items SET Value =  45 WHERE Key = 'kevlar';
+UPDATE Items SET Value =   4 WHERE Key = 'cap';
+UPDATE Items SET Value =  10 WHERE Key = 'helmet';
+UPDATE Items SET Value =  18 WHERE Key = 'gasmask';
+UPDATE Items SET Value =   6 WHERE Key = 'medkit_small';
+UPDATE Items SET Value =  15 WHERE Key = 'medkit';
+UPDATE Items SET Value =  35 WHERE Key = 'stimpak';
+UPDATE Items SET Value =   4 WHERE Key = 'cannedfood';
+UPDATE Items SET Value =   3 WHERE Key = 'water';
+UPDATE Items SET Value =   5 WHERE Key = 'mutfruit';
 
 -- ---------------------------------------------------------------------
 -- Gegner
@@ -313,6 +346,7 @@ CREATE TABLE Events (
 --   combat:key | combat:*   Kampf gegen Gegner
 --   lore            Zufaelliges Infofragment
 --   reveal:R        Karte im Radius R aufdecken
+--   trade:key | trade:*   Tauschhandel mit einem Haendler (Tabelle Traders)
 --   persist         Ort bleibt bestehen (wird nicht als erledigt markiert)
 -- ---------------------------------------------------------------------
 CREATE TABLE EventOptions (
@@ -468,6 +502,45 @@ INSERT INTO EventOptions (EventKey,SortOrder,Label,SkillKey,Difficulty,DangerSca
 INSERT INTO Events VALUES ('stash','Verstecktes Depot','Ein loser Stein, darunter ein Hohlraum. Jemand hat hier etwas versteckt.','encounter','*',0,NULL,5,'◆');
 INSERT INTO EventOptions (EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES
  ('stash',1,'Nehmen',NULL,0,0,NULL,'Danke, Unbekannter.','loot:1;xp:5',NULL,NULL);
+
+-- ---------------------------------------------------------------------
+-- Haendler (Tauschhandel, keine Waehrung)
+-- Ein Tausch gelingt, wenn der Wert deines Angebots >= dem Wert deiner
+-- Forderung ist. Werte = Items.Value, skaliert mit der Gegenstandsstufe.
+-- PayFactor:   so viel ist ihm deine Ware wert (0.7 = 70 %)
+-- PriceFactor: so viel verlangt er fuer seine Ware (1.2 = 120 %)
+-- Categories:  '*' oder kommagetrennte Kategorien/Slots fuers Sortiment
+-- Ausgeloest werden Haendler ueber den Effekt trade:key in EventOptions.
+-- ---------------------------------------------------------------------
+CREATE TABLE Traders (
+    Key         TEXT PRIMARY KEY,
+    Name        TEXT NOT NULL,
+    Greeting    TEXT NOT NULL,
+    Categories  TEXT NOT NULL DEFAULT '*',
+    StockMin    INTEGER NOT NULL DEFAULT 4,
+    StockMax    INTEGER NOT NULL DEFAULT 7,
+    PayFactor   REAL NOT NULL DEFAULT 0.7,
+    PriceFactor REAL NOT NULL DEFAULT 1.2,
+    Weight      INTEGER NOT NULL DEFAULT 10,
+    Color       TEXT NOT NULL DEFAULT '#c0a070'
+);
+
+INSERT INTO Traders VALUES
+ ('wanderer', 'Reisende Haendlerin', '"Alles hat seinen Preis, Fremder. Zeig mir, was du hast."', '*', 5, 8, 0.7, 1.2, 10, '#c0a070'),
+ ('medic',    'Wanderarzt',          '"Verbaende, Pillen, Spritzen. Ich nehme alles, was schiesst."', 'consumable,ammo', 4, 6, 0.8, 1.3, 5, '#e04040'),
+ ('scrapper', 'Schrotthaendler',     '"Metall gegen Metall. Und ich sag dir, was es wert ist."', 'weapon,armor', 4, 6, 0.75, 1.25, 6, '#9a5b34');
+
+INSERT INTO Events VALUES ('wandering_trader','Reisende Haendlerin','Ein Handkarren mit Planen, gezogen von einer Frau mit Gasmaske. Sie hebt die Hand – friedlich.','encounter','*',0,NULL,6,'⚖');
+INSERT INTO EventOptions (EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES
+ ('wandering_trader',1,'Tauschen',NULL,0,0,NULL,'Sie schlaegt die Plane zurueck.','trade:wanderer',NULL,NULL),
+ ('wandering_trader',2,'Nach Neuigkeiten fragen','perception',10,0,NULL,'Sie erzaehlt dir von ihrer Route und zeigt dir ihre Karte.','reveal:7;lore;xp:10','Sie zuckt nur mit den Schultern.','xp:2'),
+ ('wandering_trader',3,'Weitergehen',NULL,0,0,NULL,'Sie nickt dir zu und zieht weiter.','',NULL,NULL);
+
+INSERT INTO Events VALUES ('trader_post','Handelsposten','Ein umgebauter Container mit Gittertuer. Auf einem Schild steht: TAUSCH. KEIN AERGER.','poi','ruins,scrapyard,wasteland,ashdesert',1,NULL,4,'⚖');
+INSERT INTO EventOptions (EventKey,SortOrder,Label,SkillKey,Difficulty,DangerScaling,RequiresItem,SuccessText,SuccessEffects,FailText,FailEffects) VALUES
+ ('trader_post',1,'Mit dem Schrotthaendler tauschen',NULL,0,0,NULL,'Er mustert dich und deine Ausruestung.','trade:scrapper;persist',NULL,NULL),
+ ('trader_post',2,'Mit dem Wanderarzt tauschen',NULL,0,0,NULL,'Der Arzt rueckt seine Brille zurecht.','trade:medic;persist',NULL,NULL),
+ ('trader_post',3,'Weitergehen',NULL,0,0,NULL,'Der Posten bleibt, wo er ist.','persist',NULL,NULL);
 
 -- ---------------------------------------------------------------------
 -- Infofragmente (Lore). Werden in Reihenfolge der Freischaltbarkeit

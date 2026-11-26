@@ -129,6 +129,20 @@ public sealed class Combat
     public List<string> RewardLines { get; } = new();
 }
 
+/// <summary>Laufender Tauschhandel. Das Sortiment wird nicht gespeichert.</summary>
+public sealed class Trade
+{
+    public required TraderDef Def { get; init; }
+    public required TileInfo Tile { get; init; }
+    /// <summary>Ware des Haendlers (Id nur innerhalb des Handels eindeutig).</summary>
+    public List<InventoryItem> Stock { get; } = new();
+    /// <summary>Angebot des Spielers: Inventar-Id -> Anzahl.</summary>
+    public Dictionary<long, int> Offer { get; } = new();
+    /// <summary>Forderung des Spielers: Stock-Id -> Anzahl.</summary>
+    public Dictionary<long, int> Request { get; } = new();
+    public List<string> History { get; } = new();
+}
+
 public sealed class Notice
 {
     public string Title { get; init; } = "";

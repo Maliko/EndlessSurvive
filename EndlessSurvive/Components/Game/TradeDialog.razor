@@ -1,0 +1,112 @@
+@inherits GameComponent
+
+@{
+    var t = Game.Trade!;
+    int offer = Game.OfferTotal, request = Game.RequestTotal;
+    var mine = Game.TradeableInventory.Where(i => Game.ItemValue(i) > 0)
+        .OrderBy(i => Game.Def(i).Category).ThenBy(i => Game.Def(i).Name).ThenByDescending(i => i.Level).ToList();
+    var stock = t.Stock.OrderBy(i => Game.Def(i).Category).ThenBy(i => Game.Def(i).Name).ThenByDescending(i => i.Level).ToList();
+}
+<div class="overlay">
+    <div class="dialog trade-dialog">
+        <div class="event-head" style="--biome:@t.Tile.Biome.Color">
+            <span class="event-marker" style="color:@t.Def.Color;border-color:@t.Def.Color">⚖</span>
+            <div>
+                <h2>@t.Def.Name</h2>
+                <small>Tauschhandel · zahlt @Pct(t.Def.PayFactor) % · verlangt @Pct(t.Def.PriceFactor) %</small>
+            </div>
+        </div>
+        <p class="event-text">@t.Def.Greeting</p>
+
+        <div class="trade-cols">
+            <section>
+                <h3>Dein Rucksack</h3>
+                @if (mine.Count == 0)
+                {
+                    <p class="muted">Nichts zum Tauschen. Angelegte Ausruestung kannst du nicht anbieten.</p>
+                }
+                <ul class="trade-list">
+                    @foreach (var it in mine)
+                    {
+                        int sel = t.Offer.GetValueOrDefault(it.Id);
+                        <li class="@(sel > 0 ? "selected" : "")">
+                            <ItemIcon Def="Game.Def(it)" />
+                            <span class="trade-name">@Game.ItemName(it) @if (it.Quantity > 1) { <em>×@it.Quantity</em> }</span>
+                            <span class="trade-val" title="So viel ist es dem Haendler pro Stueck wert">@Game.PayValue(it)</span>
+                            <span class="trade-step">
+                                <button class="btn btn-small" disabled="@(sel == 0)" @onclick="() => Game.ChangeOffer(it, -1)">−</button>
+                                <span>@sel</span>
+                                <button class="btn btn-small" disabled="@(sel >= it.Quantity)" @onclick="() => Game.ChangeOffer(it, 1)">+</button>
+                            </span>
+                        </li>
+                    }
+                </ul>
+            </section>
+            <section>
+                <h3>Ware des Haendlers</h3>
+                @if (stock.Count == 0)
+                {
+                    <p class="muted">Ausverkauft.</p>
+                }
+                <ul class="trade-list">
+                    @foreach (var it in stock)
+                    {
+                        int sel = t.Request.GetValueOrDefault(it.Id);
+                        var d = Game.Def(it);
+                        <li class="@(sel > 0 ? "selected" : "")" title="@d.Description">
+                            <ItemIcon Def="d" />
+                            <span class="trade-name">@Game.ItemName(it) @if (it.Quantity > 1) { <em>×@it.Quantity</em> }
+                                <small>@Info(it)</small></span>
+                            <span class="trade-val" title="So viel verlangt der Haendler pro Stueck">@Game.PriceValue(it)</span>
+                            <span class="trade-step">
+                                <button class="btn btn-small" disabled="@(sel == 0)" @onclick="() => Game.ChangeRequest(it, -1)">−</button>
+                                <span>@sel</span>
+                                <button class="btn btn-small" disabled="@(sel >= it.Quantity)" @onclick="() => Game.ChangeRequest(it, 1)">+</button>
+                            </span>
+                        </li>
+                    }
+                </ul>
+            </section>
+        </div>
+
+        <div class="trade-balance @(request == 0 ? "" : offer >= request ? "ok" : "short")">
+            <span>Angebot <strong>@offer</strong></span>
+            <span class="trade-vs">@(offer >= request ? "≥" : "<")</span>
+            <span>Forderung <strong>@request</strong></span>
+            <span class="trade-note">
+                @if (request == 0) { <text>Waehle aus, was du haben willst.</text> }
+                else if (offer < request) { <text>Es fehlen noch @(request - offer).</text> }
+                else if (offer > request) { <text>@(offer - request) Ueberschuss behaelt der Haendler.</text> }
+                else { <text>Fairer Tausch.</text> }
+            </span>
+        </div>
+
+        @if (t.History.Count > 0)
+        {
+            <ul class="result-lines trade-history">
+                @foreach (var h in t.History)
+                {
+                    <li class="loot">@h</li>
+                }
+            </ul>
+        }
+
+        <div class="dialog-actions">
+            <button class="btn btn-ghost" @onclick="Game.EndTrade">Handel beenden <kbd>Esc</kbd></button>
+            <button class="btn btn-primary" disabled="@(!Game.CanExecuteTrade)" @onclick="Game.ExecuteTrade">Tauschen <kbd>Enter</kbd></button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static string Pct(double f) => Math.Round(f * 100).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private string Info(InventoryItem it)
+    {
+        var d = Game.Def(it);
+        if (d.IsWeapon) { var (a, b) = Game.ItemDamage(it); return $"Schaden {a}–{b}"; }
+        if (d.IsArmor) return $"Ruestung {Game.ItemArmor(it)}";
+        if (d.IsConsumable) return $"Heilt {d.HealMin}–{d.HealMax}";
+        return "";
+    }
+}

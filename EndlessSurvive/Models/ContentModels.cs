@@ -67,6 +67,7 @@ public sealed class ItemDef
     public string Biomes { get; set; } = "*";
     public bool Scales { get; set; }
     public string Color { get; set; } = "#ccc";
+    public int Value { get; set; }
 
     public bool IsWeapon => Category == "weapon";
     public bool IsArmor => Category == "armor";
@@ -123,6 +124,20 @@ public sealed class EventOptionDef
     public string? SuccessEffects { get; set; }
     public string? FailText { get; set; }
     public string? FailEffects { get; set; }
+}
+
+public sealed class TraderDef
+{
+    public string Key { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Greeting { get; set; } = "";
+    public string Categories { get; set; } = "*";
+    public int StockMin { get; set; }
+    public int StockMax { get; set; }
+    public double PayFactor { get; set; }
+    public double PriceFactor { get; set; }
+    public int Weight { get; set; }
+    public string Color { get; set; } = "#c0a070";
 }
 
 public sealed class LoreDef

@@ -11,6 +11,7 @@ Diese Doku erklärt, wie der Code aufgebaut ist und wo du anfasst, wenn du das S
 5. [Die Oberfläche](#5-die-oberfläche)
 6. [Formeln](#6-formeln)
 7. [Rezepte: typische Erweiterungen](#7-rezepte-typische-erweiterungen)
+7a. [Beispiel einer größeren Erweiterung: Tauschhändler](#7a-beispiel-einer-größeren-erweiterung-tauschhändler)
 8. [Stolperfallen](#8-stolperfallen)
 9. [Testen](#9-testen)
 
@@ -137,8 +138,9 @@ Regeln für „erledigt“:
 In `GamePage.razor` wird immer nur ein Dialog angezeigt, in dieser Reihenfolge:
 
 1. `Game.Combat` (Kampf)
-2. `Game.Event` (Ereignis)
-3. `Game.Notice` (Hinweise aus einer Warteschlange: Intro, Stufenaufstieg, Tod)
+2. `Game.Trade` (Tauschhandel)
+3. `Game.Event` (Ereignis)
+4. `Game.Notice` (Hinweise aus einer Warteschlange: Intro, Stufenaufstieg, Tod)
 
 Solange irgendetwas davon offen ist, ist `Game.Busy == true` und Bewegung/Rasten sind gesperrt.
 
@@ -187,6 +189,7 @@ Tabellen in `save.db`:
 | Proben | `CheckChance(option, danger)`, `RollRaw(name, chance)`, `RollText` |
 | Welt | `Move`, `StepToward`, `Rest`, `CanEnter`, `CurrentTile` |
 | Ereignisse | `ChooseOption`, `CloseEvent`, `LeaveEvent`, intern `OpenEvent`, `RunEffects`, `ApplyEffect` |
+| Handel | `ItemValue`, `PayValue`, `PriceValue`, `ChangeOffer`, `ChangeRequest`, `ExecuteTrade`, `EndTrade`, intern `StartTrade` |
 | Kampf | `CombatAttack(ranged)`, `CombatUseItem`, `CombatFlee`, `EndCombat`, intern `StartCombat`, `EnemyTurn`, `WinCombat` |
 | Fortschritt | `GainXp` (intern), `SpendAttribute`, `SpendSkill` |
 
@@ -228,6 +231,9 @@ Alle Zahlen in eckigen Klammern sind Schlüssel aus der Tabelle `Settings`.
 | Waffenschaden | `Basis × (1 + Stufe × [ItemDamagePerLevel])` |
 | Rüstung | `Basis + floor(Stufe × [ItemArmorPerLevel])` |
 | Heilgegenstand | Heilung-Probe: Erfolg = `HealMax + Heilung-Rang`, sonst zufällig `HealMin..HealMax` |
+| Tauschwert | `Items.Value × (1 + Stufe × [ItemValuePerLevel])` pro Stück |
+| Händler zahlt | `floor(Tauschwert × Traders.PayFactor)` |
+| Händler verlangt | `ceil(Tauschwert × Traders.PriceFactor)`, mindestens 1 |
 | Rasten im Freien | Heilung-Probe: 35 % / 15 % der max. LP; Begegnungsrisiko = `EncounterChance × [RestEncounterFactor]` |
 
 ---
@@ -300,6 +306,63 @@ Beispiel: Hunger.
 
 ---
 
+## 7a. Beispiel einer größeren Erweiterung: Tauschhändler
+
+Die Rezepte oben reichen, solange du vorhandene Mechaniken kombinierst. Eine **neue Mechanik** wie Tauschhandel muss einmal im Code gebaut werden. Danach sind die einzelnen Händler, Sortimente und Preise wieder reine Datenbankeinträge. Der Händler ist so umgesetzt und dient als Vorlage für ähnliche Erweiterungen (Crafting, Quests, Begleiter …).
+
+### Leitfrage: Was ist Mechanik, was ist Inhalt?
+
+| Mechanik (Code, einmalig) | Inhalt (Datenbank, beliebig oft) |
+|---|---|
+| Wie ein Tausch funktioniert | Welche Händler es gibt |
+| Wie Werte berechnet werden | Wert jedes Gegenstands, Ankaufs-/Verkaufsfaktor |
+| Wie das Sortiment ausgewürfelt wird | Sortimentsgröße und Kategorien je Händler |
+| Wie ein Händler ins Spiel kommt (Effekt `trade:`) | Wo und wie oft Händler auftauchen (Ereignisse) |
+
+### Was geändert wurde, Schritt für Schritt
+
+**1. Datenbank** (`content.sql` / `content.db`)
+- `Items` bekam die Spalte `Value` (Tauschwert). Die Werte stehen als `UPDATE`-Zeilen direkt unter den Item-Inserts.
+- Neue Tabelle `Traders`.
+- Neuer Balancing-Wert `ItemValuePerLevel` in `Settings`.
+- Zwei Ereignisse, die den neuen Effekt nutzen: `wandering_trader` (Begegnung) und `trader_post` (fester Ort mit `persist`, bleibt also auf der Karte).
+
+**2. Modelle** (`Models/ContentModels.cs`)
+- `ItemDef.Value` und neue Klasse `TraderDef`. Die Property-Namen entsprechen den Spaltennamen, Dapper mappt automatisch.
+
+**3. Laden** (`Services/ContentStore.cs`)
+- Eine Zeile: `Traders = c.Query<TraderDef>(...)`.
+
+**4. Laufzeitobjekt** (`Services/GameState.cs`)
+- Klasse `Trade`, analog zu `Combat`: Händler, ausgewürfeltes Sortiment (`Stock`), aktuelle Auswahl (`Offer`, `Request`) und bisherige Tausche (`History`).
+- Bewusste Entscheidung: Das Sortiment wird **nicht gespeichert**. Ein reisender Händler würfelt bei jeder Begegnung neu, deshalb war keine Änderung an `save.db` nötig.
+
+**5. Regeln** (`Services/GameService.cs`, Abschnitt „Tauschhandel“)
+- Property `Trade` und Einbindung in `Busy` und `Notice`, damit während des Handels nichts anderes passiert.
+- `case "trade":` in `ApplyEffect`. Er gibt `true` zurück und **pausiert dadurch die Effekt-Warteschlange**, genau wie `combat`.
+- `StartTrade` würfelt das Sortiment mit dem vorhandenen `PickLoot` aus, die Beute-Logik wird also wiederverwendet.
+- `ChangeOffer` / `ChangeRequest` ändern nur die Auswahl. `ExecuteTrade` verschiebt die Gegenstände. `EndTrade` schließt den Handel und setzt die Warteschlange mit `RunEffects()` fort, wie `EndCombat`.
+- Inventar-Aktionen (`Equip`, `Drop` …) sind während des Handels gesperrt.
+
+**6. Oberfläche**
+- `Components/Game/TradeDialog.razor`: zwei Spalten mit −/+ und einer Bilanzanzeige. Der Dialog enthält keine Logik, er ruft nur `GameService` auf.
+- `GamePage.razor`: Handel als zusätzliche Dialogstufe und Tasten (`Enter` tauschen, `Esc` beenden).
+- `InventoryPanel.razor`: zeigt den Wert jedes Gegenstands.
+- `app.css`: Abschnitt „Tauschhandel“.
+
+### Checkliste für deine eigene Erweiterung
+
+1. Trennen: Was ist Regel (Code), was ist Inhalt (Datenbank)?
+2. Neue Tabellen/Spalten in `content.sql` anlegen, `content.db` neu erzeugen, Modellklasse ergänzen, in `ContentStore` laden.
+3. Braucht die Mechanik einen eigenen Dialog? Dann ein Laufzeitobjekt in `GameState.cs` und eine Property in `GameService`, und sie in `Busy` und `Notice` berücksichtigen.
+4. Einstieg über einen neuen Effekt in `ApplyEffect`. So bestimmt die Datenbank, wann die Mechanik ausgelöst wird.
+5. Muss etwas über das Neuladen hinaus erhalten bleiben? Dann `SaveStore` erweitern (siehe Rezept „Neuer Wert im Spielstand“).
+6. Dialog-Komponente mit `@inherits GameComponent`, in `GamePage.razor` einhängen, Tasten in `OnKey`.
+7. Jede zustandsändernde Methode endet mit `Persist()`. Reine Auswahländerungen, die nichts speichern müssen, rufen nur `Changed?.Invoke()` auf.
+8. Effekt und Tabellen in README und `content.sql` dokumentieren.
+
+---
+
 ## 8. Stolperfallen
 
 **Fest im Code verwendete Schlüssel.** Diese Keys aus der Datenbank werden vom Code direkt angesprochen. Nicht umbenennen oder löschen, sonst funktionieren Teile der Regeln nicht mehr:
@@ -349,7 +412,7 @@ node tools/bot-playtest.js 500
 Der Test **überschreibt den aktuellen Spielstand**. Beispielausgabe:
 
 ```
-Kaempfe 25 | Ereignisse 50 | Fehler []
+Kaempfe 25 | Ereignisse 50 | Haendler 1 | Fehler []
 Zuege 351 | Besiegte Gegner 16 | Tode 2 | Hoechste Gefahrenstufe 7 | ...
 ```
 

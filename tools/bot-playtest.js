@@ -35,7 +35,7 @@ const { chromium } = require('playwright');
   });
   const has = sel => p.evaluate(s => !!document.querySelector(s), sel);
 
-  let events = 0, combats = 0;
+  let events = 0, combats = 0, trades = 0;
   for (let step = 0; step < steps; step++) {
     // offene Dialoge abarbeiten
     for (let guard = 0; guard < 60; guard++) {
@@ -45,10 +45,13 @@ const { chromium } = require('playwright');
           const h = await hp();
           const canHeal = await has('.combat-items button');
           const canShoot = await p.evaluate(() => { const b = document.querySelectorAll('.combat-actions button')[1]; return b && !b.disabled; });
-          if (h < 0.35 && canHeal) await p.click('.combat-items button');
+          if (h < 0.35 && canHeal) await p.evaluate(() => document.querySelector('.combat-items button')?.click());
           else if (h < 0.2) await p.keyboard.press('3');
           else await p.keyboard.press(canShoot ? '2' : '1');
         }
+      } else if (await has('.trade-dialog')) {
+        trades++;
+        await p.keyboard.press('Escape'); // Bot tauscht nicht, er beendet den Handel
       } else if (await has('.event-dialog')) {
         if (await has('.event-dialog .options')) {
           const k = await p.evaluate(() => {
@@ -81,7 +84,7 @@ const { chromium } = require('playwright');
   }
 
   await p.screenshot({ path: 'bot-playtest.png' });
-  console.log(`Kaempfe ${combats} | Ereignisse ${events} | Fehler ${JSON.stringify(errors)}`);
+  console.log(`Kaempfe ${combats} | Ereignisse ${events} | Haendler ${trades} | Fehler ${JSON.stringify(errors)}`);
   console.log((await p.locator('.stats').innerText()).replace(/\n/g, ' | '));
   console.log((await p.locator('.hud').innerText()).replace(/\n/g, ' '));
   await browser.close();

@@ -28,8 +28,9 @@ public sealed class GameService
     public WorldGen? World { get; private set; }
     public ActiveEvent? Event { get; private set; }
     public Combat? Combat { get; private set; }
-    public Notice? Notice => Event is null && Combat is null && _notices.Count > 0 ? _notices.Peek() : null;
-    public bool Busy => Event is not null || Combat is not null || _notices.Count > 0;
+    public Trade? Trade { get; private set; }
+    public Notice? Notice => Event is null && Combat is null && Trade is null && _notices.Count > 0 ? _notices.Peek() : null;
+    public bool Busy => Event is not null || Combat is not null || Trade is not null || _notices.Count > 0;
     public bool Loaded => State is not null && World is not null;
 
     // =================================================================
@@ -52,7 +53,7 @@ public sealed class GameService
     public void NewGame(string name, Dictionary<string, int> attributes, Dictionary<string, int> skills)
     {
         _store.Delete();
-        Event = null; Combat = null; _notices.Clear(); _effects.Clear();
+        Event = null; Combat = null; Trade = null; _notices.Clear(); _effects.Clear();
         var s = new GameState();
         s.Char.Name = string.IsNullOrWhiteSpace(name) ? "Namenlos" : name.Trim();
         s.Char.Seed = Random.Shared.NextInt64(1, long.MaxValue);
@@ -180,7 +181,7 @@ public sealed class GameService
 
     public void Equip(InventoryItem item)
     {
-        if (State is null || Combat is not null) return;
+        if (State is null || Combat is not null || Trade is not null) return;
         var d = Def(item);
         if (!d.IsEquippable) return;
         foreach (var other in State.Inventory.Where(i => i.Equipped && Def(i).Slot == d.Slot)) other.Equipped = false;
@@ -191,14 +192,14 @@ public sealed class GameService
 
     public void Unequip(InventoryItem item)
     {
-        if (State is null || Combat is not null) return;
+        if (State is null || Combat is not null || Trade is not null) return;
         item.Equipped = false;
         Persist();
     }
 
     public void Drop(InventoryItem item)
     {
-        if (State is null || Combat is not null) return;
+        if (State is null || Combat is not null || Trade is not null) return;
         State.Inventory.Remove(item);
         AddLog($"Weggeworfen: {ItemName(item)}{(item.Quantity > 1 ? $" ({item.Quantity})" : "")}.");
         Persist();
@@ -225,7 +226,7 @@ public sealed class GameService
     /// <summary>Alle Ausruestung wegwerfen, die nicht besser als die angelegte ist.</summary>
     public void DropObsolete()
     {
-        if (State is null || Combat is not null) return;
+        if (State is null || Combat is not null || Trade is not null) return;
         int n = State.Inventory.RemoveAll(IsObsolete);
         if (n > 0) AddLog($"{n} schwaechere Ausruestungsteile aussortiert.");
         Persist();
@@ -416,7 +417,7 @@ public sealed class GameService
     public void ChooseOption(OptionView option)
     {
         var ev = Event;
-        if (ev is null || ev.Roll is not null || ev.ResultText is not null || !option.Available || Combat is not null) return;
+        if (ev is null || ev.Roll is not null || ev.ResultText is not null || !option.Available || Combat is not null || Trade is not null) return;
         var o = option.Def;
         bool success = true;
         if (!string.IsNullOrEmpty(o.SkillKey))
@@ -518,13 +519,16 @@ public sealed class GameService
             case "persist":
                 _persist = true;
                 break;
+            case "trade":
+                StartTrade(p.Length > 1 ? p[1] : "*", tile);
+                return Trade is not null;
         }
         return false;
     }
 
     public void CloseEvent()
     {
-        if (Event is null || !Event.Finished || Combat is not null) return;
+        if (Event is null || !Event.Finished || Combat is not null || Trade is not null) return;
         Event = null;
         if (State!.Char.Hp <= 0) HandleDeath();
         Persist();
@@ -805,10 +809,132 @@ public sealed class GameService
         s.Char.X = 0; s.Char.Y = 0;
         s.Char.Hp = Math.Max(1, MaxHp / 2);
         _effects.Clear();
-        Event = null; Combat = null;
+        Event = null; Combat = null; Trade = null;
         Explore(0, 0, SightRadius);
         AddLog($"Du bist gestorben und im Bunker wieder zu dir gekommen. −{lost} EP.", "bad");
         _notices.Enqueue(new Notice { Title = "Niedergestreckt", Text = _c.Text("death") + (lost > 0 ? $"\n\nDu verlierst {lost} EP." : ""), Kind = "death" });
+    }
+
+    // =================================================================
+    //  Tauschhandel
+    // =================================================================
+
+    /// <summary>Interner Wert eines Stuecks, skaliert mit der Gegenstandsstufe.</summary>
+    public int ItemValue(InventoryItem i) =>
+        (int)Math.Round(Def(i).Value * (1 + i.Level * _c.Num("ItemValuePerLevel", 0.25)));
+
+    /// <summary>So viel ist dem Haendler ein Stueck deiner Ware wert.</summary>
+    public int PayValue(InventoryItem i) => Trade is null ? 0 : (int)Math.Floor(ItemValue(i) * Trade.Def.PayFactor);
+
+    /// <summary>So viel verlangt der Haendler fuer ein Stueck seiner Ware.</summary>
+    public int PriceValue(InventoryItem i) => Trade is null || ItemValue(i) <= 0 ? 0 : Math.Max(1, (int)Math.Ceiling(ItemValue(i) * Trade.Def.PriceFactor));
+
+    /// <summary>Gegenstaende, die der Spieler anbieten kann (angelegte nicht).</summary>
+    public IEnumerable<InventoryItem> TradeableInventory => State?.Inventory.Where(i => !i.Equipped) ?? [];
+
+    public int OfferTotal => Trade is null ? 0 : Trade.Offer.Sum(kv => State!.Inventory.FirstOrDefault(i => i.Id == kv.Key) is { } it ? PayValue(it) * kv.Value : 0);
+
+    public int RequestTotal => Trade is null ? 0 : Trade.Request.Sum(kv => Trade.Stock.FirstOrDefault(i => i.Id == kv.Key) is { } it ? PriceValue(it) * kv.Value : 0);
+
+    public bool CanExecuteTrade => Trade is not null && Trade.Request.Count > 0 && OfferTotal >= RequestTotal;
+
+    private void StartTrade(string traderKey, TileInfo tile)
+    {
+        TraderDef? def = null;
+        if (traderKey != "*" && _c.Traders.TryGetValue(traderKey, out var d)) def = d;
+        def ??= _dice.Weighted(_c.Traders.Values.OrderBy(t => t.Key, StringComparer.Ordinal).ToList(), t => t.Weight);
+        if (def is null) return;
+
+        var trade = new Trade { Def = def, Tile = tile };
+        var cats = def.Categories.Trim() == "*" ? new List<string?> { null }
+            : def.Categories.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(c => (string?)c).ToList();
+        int n = _dice.Range(def.StockMin, def.StockMax);
+        long nextId = 1;
+        for (int k = 0; k < n; k++)
+        {
+            var item = PickLoot(tile, cats[_dice.Range(0, cats.Count - 1)]);
+            if (item is null || item.Value <= 0) continue;
+            int level = item.Scales ? Math.Max(0, tile.Danger + _dice.Range(-1, 1)) : 0;
+            int qty = item.Category == "ammo" ? _dice.Range(4, 12) : item.IsConsumable ? _dice.Range(1, 3) : 1;
+            var stack = item.IsEquippable ? null : trade.Stock.FirstOrDefault(s => s.ItemKey == item.Key && s.Level == level);
+            if (stack is not null) stack.Quantity += qty;
+            else trade.Stock.Add(new InventoryItem { Id = nextId++, ItemKey = item.Key, Level = level, Quantity = qty });
+        }
+        Trade = trade;
+        AddLog($"Handel mit {def.Name}.", "event");
+    }
+
+    /// <summary>Anzahl eines eigenen Gegenstands im Angebot aendern.</summary>
+    public void ChangeOffer(InventoryItem item, int delta)
+    {
+        if (Trade is null || item.Equipped) return;
+        int cur = Trade.Offer.GetValueOrDefault(item.Id);
+        int next = Math.Clamp(cur + delta, 0, item.Quantity);
+        if (next == 0) Trade.Offer.Remove(item.Id); else Trade.Offer[item.Id] = next;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Anzahl eines Haendler-Gegenstands in der Forderung aendern.</summary>
+    public void ChangeRequest(InventoryItem stockItem, int delta)
+    {
+        if (Trade is null) return;
+        int cur = Trade.Request.GetValueOrDefault(stockItem.Id);
+        int next = Math.Clamp(cur + delta, 0, stockItem.Quantity);
+        if (next == 0) Trade.Request.Remove(stockItem.Id); else Trade.Request[stockItem.Id] = next;
+        Changed?.Invoke();
+    }
+
+    public void ExecuteTrade()
+    {
+        var t = Trade;
+        if (t is null || !CanExecuteTrade) return;
+        var s = State!;
+        var given = new List<string>();
+        var got = new List<string>();
+
+        // Eigene Ware an den Haendler
+        foreach (var (id, qty) in t.Offer)
+        {
+            var it = s.Inventory.FirstOrDefault(i => i.Id == id);
+            if (it is null) continue;
+            int q = Math.Min(qty, it.Quantity);
+            given.Add($"{ItemName(it)}{(q > 1 ? $" ×{q}" : "")}");
+            it.Quantity -= q;
+            if (it.Quantity <= 0) s.Inventory.Remove(it);
+            var stack = Def(it).IsEquippable ? null : t.Stock.FirstOrDefault(x => x.ItemKey == it.ItemKey && x.Level == it.Level);
+            if (stack is not null) stack.Quantity += q;
+            else t.Stock.Add(new InventoryItem { Id = t.Stock.Count == 0 ? 1 : t.Stock.Max(x => x.Id) + 1, ItemKey = it.ItemKey, Level = it.Level, Quantity = q });
+        }
+        // Ware des Haendlers an den Spieler
+        foreach (var (id, qty) in t.Request)
+        {
+            var it = t.Stock.FirstOrDefault(i => i.Id == id);
+            if (it is null) continue;
+            int q = Math.Min(qty, it.Quantity);
+            var added = AddItem(it.ItemKey, it.Level, q);
+            got.Add($"{ItemName(added)}{(q > 1 ? $" ×{q}" : "")}");
+            it.Quantity -= q;
+            if (it.Quantity <= 0) t.Stock.Remove(it);
+        }
+        t.Offer.Clear();
+        t.Request.Clear();
+        var line = $"{string.Join(", ", given)} → {string.Join(", ", got)}";
+        t.History.Add(line);
+        AddLog($"Getauscht: {line}", "loot");
+        Persist();
+    }
+
+    public void EndTrade()
+    {
+        var t = Trade;
+        if (t is null) return;
+        Trade = null;
+        if (Event is { } ev)
+        {
+            ev.ResultLines.Add(t.History.Count == 0 ? $"Kein Handel mit {t.Def.Name}" : $"{t.History.Count} Tausch(e) mit {t.Def.Name}");
+            RunEffects();
+        }
+        Persist();
     }
 
     // =================================================================
@@ -857,7 +983,7 @@ public sealed class GameService
 
     public void DismissNotice()
     {
-        if (Event is null && Combat is null && _notices.Count > 0) _notices.Dequeue();
+        if (Event is null && Combat is null && Trade is null && _notices.Count > 0) _notices.Dequeue();
         Changed?.Invoke();
     }
 
